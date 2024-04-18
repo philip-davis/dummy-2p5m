@@ -40,5 +40,5 @@ plt.ylabel('Latitude')
 nf = (w1**2 + w2**2)**.5
 
 if (w1 != 0 or w2 != 0) and (ps1 != 0 or ps2 != 0):
-    plt.arrow(ps1, ps2, .25*w2/h,-.25*w1/h,width=0.02, color='r')
+    plt.arrow(ps1, ps2, .25*w2/nf,-.25*w1/nf,width=0.02, color='r')
 plt.show()

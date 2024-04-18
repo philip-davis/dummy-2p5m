@@ -1,0 +1,17 @@
+[model]
+plume = [-39, 46.2]
+wind = [15, 25]
+baseline = 2
+steps = 100_000
+
+[model.grid]
+min = [-40, 45]
+max = [-38, 48]
+delta = [0.05, 0.05]
+
+[sim]
+out_steps = 1_000
+out_dir = "sim_out"
+
+[sensors]
+count = 100

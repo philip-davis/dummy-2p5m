@@ -4,34 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-// TODO: make sure axes are right, i.e. x:y::longitude:latitute
-//    Because they are NOT right somewhere resulting in transposition.
-#define LAT_IDX 0
-#define LONG_IDX 1
-
-struct sim_args {
-    double min_coord[2]; // lower bounds of sim
-    double max_coord[2]; // upper bounds of sim
-    double grid_deltas[2]; // dx, dy
-    double plume_source[2]; // source location
-    double wind[2]; // wind (convection) vector
-    /*
-        baseline has three effects:
-            1. sets conditions at f(x,0)
-            2. sets boundary conditons for tail end of convection
-            3. source injects 10 x baseline every t
-    */
-    double baseline;
-    int steps; // how many steps to simulate
-    int out_steps; // how often to create output file
-};
-
-struct sim_grid {
-    int nx, ny; // number of columns and rows
-    int plumex, plumey; // plume/source matrix indices
-    double **data; // the data matrix
-    struct sim_args *args; // inputed simulation parameters
-};
+#include "common.h"
+#include "toml.h"
 
 /*
     Write the simulation grid to a file
@@ -60,140 +34,27 @@ void fwrite_grid_data(struct sim_grid *grid, const char *filename, int step) {
     }
 }
 
-/*
-        Print the grid paramters (not the grid data)
-*/
-void printf_grid(struct sim_grid *grid)
-{
-    struct sim_args *passed_args = grid->args;
-
-    printf("-=-Model Setup-=-\n\n");
-
-    printf("--Passed Arguments--\n");
-    printf("Min Value: %lf, %lf\n", passed_args->min_coord[LAT_IDX], passed_args->min_coord[LONG_IDX]);
-    printf("Max Value: %lf, %lf\n", passed_args->max_coord[LAT_IDX], passed_args->max_coord[LONG_IDX]);
-    printf("Grid Deltas: %lf, %lf\n", passed_args->grid_deltas[LAT_IDX], passed_args->grid_deltas[LONG_IDX]);
-    if(passed_args->plume_source[LAT_IDX] != 0 && passed_args->plume_source[LONG_IDX] != 0) {
-        printf("Plume at %lf, %lf\n", passed_args->plume_source[LAT_IDX], passed_args->plume_source[LONG_IDX]);
-    } else {
-        printf("No Plume coordinates set.\n");
-    }
-    printf("Wind vector: %lf, %lf\n", passed_args->wind[LAT_IDX], passed_args->wind[LONG_IDX]);
-    printf("Baseline particulate: %lf\n", passed_args->baseline);
-
-    printf("--Grid Parameters--\n");
-    printf("Dimensions: (%i, %i)\n", grid->nx, grid->ny);
-    if(grid->plumex != -1 && grid->plumey != -1) {
-        printf("Plume grid point: (%i, %i)\n", grid->plumex, grid->plumey);
-    } else {
-        printf("No plume\n");
-    }
-
-
-}
-
-/*
-    Do a convection-diffusion step with explicit advance (Euler's method)
-    The diffusion and convection coefficients are trivial, and numerical
-    instability is VERY LIKELY for many values that result in a snappy 
-    run time on a laptop.
-
-    Return the largest value in the new timestep (artifact of troubleshooting)
-*/
-double convect_diffuse(struct sim_grid *grid, double dt)
-{
-    static double **new_data = NULL;
-    double i_bias, j_bias;
-    double w_lat = grid->args->wind[LAT_IDX];
-    double w_long = grid->args->wind[LONG_IDX];
-    double dx = grid->args->grid_deltas[LONG_IDX];
-    double dy = grid->args->grid_deltas[LAT_IDX];
-    double **data = grid->data;
-    double conv_du, diff_du;
-    double max = -1;
-    int i, j;
-
-    // keep reusing the same static buffer
-    if(!new_data) {
-        new_data = malloc(sizeof(*new_data) * grid->ny);
-        new_data[0] = malloc(sizeof(*new_data[0]) * grid->nx * grid->ny);
-        for(i = 1; i < grid->ny; i++) {
-            new_data[i] = &(new_data[0][i * grid->nx]);
-        }
-    }
-    
-    // TODO: fiddle with coefficients? Better put in some stability checks at least.
-    for(i = 0; i < grid->ny; i++) {
-        /* the point of i_bias and j_bias is that we can be rational about convection
-            at the boundaries towards which the wind is blowing, but we can't in the
-            direction the wind is coming from (thar be monsters). We bias the indices
-            by the corresponding components of the wind vector, and don't try to calculate
-            the convection component if that puts us out of bounds.
-
-            Very small values in the wind vector might cause a round-off error bug.
-        */ 
-        i_bias = (double)i - w_long;
-        for(j = 0; j < grid->nx; j++) {
-            // Convection component
-            j_bias = (double)j - w_lat;
-            conv_du = 0;
-            if(i_bias > 0 && i_bias < grid->ny-1 && j_bias > 0 && j_bias < grid->nx-1) {
-                // choose forward or backwards difference to align with the wind direction
-                if(w_long > 0) {
-                    conv_du += (w_long * (data[i][j] - data[i-1][j])) / (2 * dy);
-                } else {
-                    conv_du += (w_long * (data[i+1][j] - data[i][j])) / (2 * dy);
-                }
-                if(w_lat > 0) {
-                    conv_du += (w_lat * (data[i][j] - data[i][j-1])) / (2 * dx);
-                } else {
-                    conv_du += (w_lat * (data[i][j+1] - data[i][j])) / (2 * dx);
-                }
-            }
-
-            // Diffusion Component
-            diff_du = 0;
-            if(i > 0 && i < grid->ny-1 && j > 0 && j < grid->nx-1) {
-                diff_du += (data[i+1][j] - 2 * data[i][j] + data[i-1][j]) / (dy * dy);
-                diff_du += (data[i][j+1] - 2 * data[i][j] + data[i][j-1]) / (dx * dx);
-            }
-
-            new_data[i][j] = data[i][j] + dt * (diff_du - conv_du);
-            if(new_data[i][j] > max) {
-                max = new_data[i][j];
-            }
-        }
-    }
-
-    // plume source
-    if(grid->plumex != -1 && grid->plumey != -1) {
-        new_data[grid->plumex][grid->plumey] += 10 * grid->args->baseline;
-    }
-
-    memcpy(data[0], new_data[0], sizeof(*new_data[0]) * grid->nx * grid->ny);
-
-    return(max);
-}
-
 int parse_arguments(int argc, char *argv[], struct sim_args *args)
 {
+    int nchar;
      // Define long and short options
     struct option long_options[] = {
-        {"min", required_argument, 0, 'm'},
-        {"max", required_argument, 0, 'M'},
-        {"grid_deltas", required_argument, 0, 'd'},
+        {"min", optional_argument, 0, 'm'},
+        {"max", optional_argument, 0, 'M'},
+        {"grid_deltas", optional_argument, 0, 'd'},
         {"plume", optional_argument, 0, 'p'},
         {"wind", optional_argument, 0, 'w'},
         {"baseline", optional_argument, 0, 'b'},
-        {"steps", required_argument, 0, 't'},
+        {"steps", optional_argument, 0, 't'},
         {"out_steps", optional_argument, 0, 'o'},
+        {"input_file", optional_argument, 0, 'i'},
         {0, 0, 0, 0}
     };
 
     // Parse command line arguments
     int option;
     int option_index = 0;
-    while ((option = getopt_long(argc, argv, "m:M:p:w:d:b:t:o:", long_options, &option_index)) != -1) {
+    while ((option = getopt_long(argc, argv, "m:M:p:w:d:b:t:o:i:", long_options, &option_index)) != -1) {
         switch (option) {
             case 'd':
                 sscanf(optarg, "%lf,%lf", &args->grid_deltas[LAT_IDX], &args->grid_deltas[LONG_IDX]);
@@ -219,16 +80,31 @@ int parse_arguments(int argc, char *argv[], struct sim_args *args)
             case 'o':
                 sscanf(optarg, "%i", &args->out_steps);
                 break;
+            case 'i':
+                sscanf(optarg, "%*s%n", &nchar);
+                args->input_file = malloc(nchar + 1);
+                sscanf(optarg, "%s", args->input_file);
+                break;
             default:
-                printf("Usage: %s --min <float,float> --max <float,float> --grid_deltas <float, float> --steps <int> [-- out_steps <int> --plume <float, float>] [--wind <float, float>] [--baseline float]\n", argv[0]);
+                fprintf(stderr, "Usage: %s (--input-file <filename> | --min <float,float> --max <float,float> --grid_deltas <float, float> --steps <int> [--out_steps <int> --plume <float, float>] [--wind <float, float>] [--baseline float])\n", argv[0]);
                 return EXIT_FAILURE;
         }
     }
 
-    if(!args->steps) {
-        fprintf(stderr, "No steps argument found!\n\n");
-        printf("Usage: %s --min <float,float> --max <float,float> --grid_deltas <float, float> --steps <int> [-- out_steps <int> --plume <float, float>] [--wind <float, float>] [--baseline float]\n", argv[0]);
+    if((!args->steps || (args->min_coord[LAT_IDX] == args->max_coord[LAT_IDX])
+        || (args->min_coord[LONG_IDX] == args->max_coord[LONG_IDX]) 
+        || !args->grid_deltas[LAT_IDX] || !args->grid_deltas[LONG_IDX]) 
+        && !args->input_file) {
+        fprintf(stderr, "Missing required arguments!\n\n");
+        fprintf(stderr, "Usage: %s (--input-file <filename> | --min <float,float> --max <float,float> --grid_deltas <float, float> --steps <int> [--out_steps <int> --plume <float, float>] [--wind <float, float>] [--baseline float])\n", argv[0]);
         return EXIT_FAILURE;
+    }
+
+    if(args->input_file) {
+        if(parse_conf(args->input_file, args) < 0) {
+            free(args->input_file);
+            args->input_file = NULL;
+        }
     }
 
     return EXIT_SUCCESS;
@@ -243,7 +119,7 @@ struct sim_grid *init_grid(struct sim_args *args)
     if (fabs(args->min_coord[LAT_IDX]) + fabs(args->min_coord[LONG_IDX]) == 0.0
             || fabs(args->max_coord[LAT_IDX]) + fabs(args->max_coord[LONG_IDX]) == 0.0
             || fabs(args->grid_deltas[LAT_IDX]) + fabs(args->grid_deltas[LONG_IDX]) == 0.0) {
-        printf("Error: --min, --max, and --grid_deltas arguments are required.\n");
+        printf("Error: min, max, and grid deltas arguments are required.\n");
         return NULL;
     }
 
@@ -297,9 +173,10 @@ struct sim_grid *init_grid(struct sim_args *args)
 int main(int argc, char *argv[]) {
     struct sim_args args = {0};
     struct sim_grid *grid;
-    char outfile[100];
+    char outbase[100], outfile[100];
     double max;
     double too_big = 5000;
+
     int t;
 
    
@@ -314,11 +191,26 @@ int main(int argc, char *argv[]) {
 
     printf_grid(grid);
 
+    if(args.sim_out_dir && create_dir(args.sim_out_dir)) {
+        sprintf(outbase, "%s/out.", args.sim_out_dir);
+    } else {
+        sprintf(outbase, "out.");
+    }
+
+    printf("Simulate %i steps.", args.steps);
+    if(args.out_steps) {
+        printf("Output every %i steps.\n", args.out_steps);
+        if(args.sim_out_dir) {
+            printf("Output will be placed in %s/\n", args.sim_out_dir);
+        }
+    }
+    printf("\n");
+
     for(t = 0; t < args.steps; t++) {
         max = convect_diffuse(grid, .00001);
         if((args.out_steps && t % args.out_steps == 0) || max > too_big) {
             printf("Step %i\n", t);
-            sprintf(outfile, "out.%i.dat", t);
+            sprintf(outfile, "%s%i.dat", outbase, t);
             fwrite_grid_data(grid, outfile, t);
         }
         if(max > too_big) {
