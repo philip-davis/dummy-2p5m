@@ -1,7 +1,7 @@
-#include<string.h>
-#include<stdio.h>
-#include<stdlib.h>
-#include<sys/stat.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
 
 #include "common.h"
 #include "toml.h"
@@ -18,15 +18,21 @@ void printf_grid(struct sim_grid *grid)
     printf("-=-Model Setup-=-\n\n");
 
     printf("--Passed Arguments--\n");
-    printf("Min Value: %lf, %lf\n", passed_args->min_coord[LAT_IDX], passed_args->min_coord[LONG_IDX]);
-    printf("Max Value: %lf, %lf\n", passed_args->max_coord[LAT_IDX], passed_args->max_coord[LONG_IDX]);
-    printf("Grid Deltas: %lf, %lf\n", passed_args->grid_deltas[LAT_IDX], passed_args->grid_deltas[LONG_IDX]);
-    if(passed_args->plume_source[LAT_IDX] != 0 && passed_args->plume_source[LONG_IDX] != 0) {
-        printf("Plume at %lf, %lf\n", passed_args->plume_source[LAT_IDX], passed_args->plume_source[LONG_IDX]);
+    printf("Min Value: %lf, %lf\n", passed_args->min_coord[LAT_IDX],
+           passed_args->min_coord[LONG_IDX]);
+    printf("Max Value: %lf, %lf\n", passed_args->max_coord[LAT_IDX],
+           passed_args->max_coord[LONG_IDX]);
+    printf("Grid Deltas: %lf, %lf\n", passed_args->grid_deltas[LAT_IDX],
+           passed_args->grid_deltas[LONG_IDX]);
+    if(passed_args->plume_source[LAT_IDX] != 0 &&
+       passed_args->plume_source[LONG_IDX] != 0) {
+        printf("Plume at %lf, %lf\n", passed_args->plume_source[LAT_IDX],
+               passed_args->plume_source[LONG_IDX]);
     } else {
         printf("No Plume coordinates set.\n");
     }
-    printf("Wind vector: %lf, %lf\n", passed_args->wind[LAT_IDX], passed_args->wind[LONG_IDX]);
+    printf("Wind vector: %lf, %lf\n", passed_args->wind[LAT_IDX],
+           passed_args->wind[LONG_IDX]);
     printf("Baseline particulate: %lf\n", passed_args->baseline);
 
     printf("\n--Grid Parameters--\n");
@@ -60,41 +66,52 @@ double convect_diffuse(struct sim_grid *grid, double dt)
             new_data[i] = &(new_data[0][i * grid->nx]);
         }
     }
-    
-    // TODO: fiddle with coefficients? Better put in some stability checks at least.
-    for(i = 0; i < grid->ny; i++) {
-        /* the point of i_bias and j_bias is that we can be rational about convection
-            at the boundaries towards which the wind is blowing, but we can't in the
-            direction the wind is coming from (thar be monsters). We bias the indices
-            by the corresponding components of the wind vector, and don't try to calculate
-            the convection component if that puts us out of bounds.
 
-            Very small values in the wind vector might cause a round-off error bug.
-        */ 
+    // TODO: fiddle with coefficients? Better put in some stability checks at
+    // least.
+    for(i = 0; i < grid->ny; i++) {
+        /* the point of i_bias and j_bias is that we can be rational about
+           convection at the boundaries towards which the wind is blowing, but
+           we can't in the direction the wind is coming from (thar be monsters).
+           We bias the indices by the corresponding components of the wind
+           vector, and don't try to calculate the convection component if that
+           puts us out of bounds.
+
+            Very small values in the wind vector might cause a round-off error
+           bug.
+        */
         i_bias = (double)i - w_long;
         for(j = 0; j < grid->nx; j++) {
             // Convection component
             j_bias = (double)j - w_lat;
             conv_du = 0;
-            if(i_bias > 0 && i_bias < grid->ny-1 && j_bias > 0 && j_bias < grid->nx-1) {
-                // choose forward or backwards difference to align with the wind direction
+            if(i_bias > 0 && i_bias < grid->ny - 1 && j_bias > 0 &&
+               j_bias < grid->nx - 1) {
+                // choose forward or backwards difference to align with the wind
+                // direction
                 if(w_long > 0) {
-                    conv_du += (w_long * (data[i][j] - data[i-1][j])) / (2 * dy);
+                    conv_du +=
+                        (w_long * (data[i][j] - data[i - 1][j])) / (2 * dy);
                 } else {
-                    conv_du += (w_long * (data[i+1][j] - data[i][j])) / (2 * dy);
+                    conv_du +=
+                        (w_long * (data[i + 1][j] - data[i][j])) / (2 * dy);
                 }
                 if(w_lat > 0) {
-                    conv_du += (w_lat * (data[i][j] - data[i][j-1])) / (2 * dx);
+                    conv_du +=
+                        (w_lat * (data[i][j] - data[i][j - 1])) / (2 * dx);
                 } else {
-                    conv_du += (w_lat * (data[i][j+1] - data[i][j])) / (2 * dx);
+                    conv_du +=
+                        (w_lat * (data[i][j + 1] - data[i][j])) / (2 * dx);
                 }
             }
 
             // Diffusion Component
             diff_du = 0;
-            if(i > 0 && i < grid->ny-1 && j > 0 && j < grid->nx-1) {
-                diff_du += (data[i+1][j] - 2 * data[i][j] + data[i-1][j]) / (dy * dy);
-                diff_du += (data[i][j+1] - 2 * data[i][j] + data[i][j-1]) / (dx * dx);
+            if(i > 0 && i < grid->ny - 1 && j > 0 && j < grid->nx - 1) {
+                diff_du += (data[i + 1][j] - 2 * data[i][j] + data[i - 1][j]) /
+                           (dy * dy);
+                diff_du += (data[i][j + 1] - 2 * data[i][j] + data[i][j - 1]) /
+                           (dx * dx);
             }
 
             new_data[i][j] = data[i][j] + dt * (diff_du - conv_du);
@@ -111,7 +128,7 @@ double convect_diffuse(struct sim_grid *grid, double dt)
 
     memcpy(data[0], new_data[0], sizeof(*new_data[0]) * grid->nx * grid->ny);
 
-    return(max);
+    return (max);
 }
 
 static void get_toml_pair(toml_table_t *t, const char *key, double d[2])
@@ -160,17 +177,17 @@ static void get_toml_str(toml_table_t *t, const char *key, char **str)
 
 int parse_conf(const char *filename, struct sim_args *args)
 {
-     FILE *f;
-     toml_table_t *conf, *model, *sim, *sensors, *grid;
-     toml_datum_t dat;
-     toml_array_t *arr;
-     char errbuf[200];
+    FILE *f;
+    toml_table_t *conf, *model, *sim, *sensors, *grid;
+    toml_datum_t dat;
+    toml_array_t *arr;
+    char errbuf[200];
 
     f = fopen(filename, "r");
     if(!f) {
         fprintf(stderr, "WARNING: could not open configuration file '%s'.\n",
                 filename);
-        return(-1);
+        return (-1);
     }
 
     conf = toml_parse_file(f, errbuf, sizeof(errbuf));
@@ -197,7 +214,7 @@ int parse_conf(const char *filename, struct sim_args *args)
 
     toml_free(conf);
 
-    return(0);
+    return (0);
 }
 
 int create_dir(const char *dir)
