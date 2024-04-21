@@ -1,3 +1,4 @@
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -45,7 +46,7 @@ void printf_grid(struct sim_grid *grid)
     printf("\n\n");
 }
 
-double convect_diffuse(struct sim_grid *grid, double dt)
+double convect_diffuse(struct sim_grid *grid, struct sensor_args *sargs)
 {
     static double **new_data = NULL;
     double i_bias, j_bias;
@@ -56,6 +57,7 @@ double convect_diffuse(struct sim_grid *grid, double dt)
     double **data = grid->data;
     double conv_du, diff_du;
     double max = -1;
+    double dt = grid->args->dt;
     int i, j;
 
     // keep reusing the same static buffer
@@ -82,6 +84,16 @@ double convect_diffuse(struct sim_grid *grid, double dt)
         */
         i_bias = (double)i - w_long;
         for(j = 0; j < grid->nx; j++) {
+            if(sargs) {
+                // wind varies stochastically if wind shift is set
+                w_lat = uniform_sample_d_interval(
+                    grid->args->wind[LAT_IDX] - sargs->wind_shift[LAT_IDX],
+                    grid->args->wind[LAT_IDX] + sargs->wind_shift[LAT_IDX]);
+                w_long = uniform_sample_d_interval(
+                    grid->args->wind[LONG_IDX] - sargs->wind_shift[LONG_IDX],
+                    grid->args->wind[LONG_IDX] + sargs->wind_shift[LONG_IDX]);
+                i_bias = (double)i - w_long;
+            }
             // Convection component
             j_bias = (double)j - w_lat;
             conv_du = 0;
@@ -115,6 +127,11 @@ double convect_diffuse(struct sim_grid *grid, double dt)
             }
 
             new_data[i][j] = data[i][j] + dt * (diff_du - conv_du);
+            if(sargs && sargs->variation) {
+                new_data[i][j] = uniform_sample_d_interval(
+                    new_data[i][j] * (1 - sargs->variation),
+                    new_data[i][j] * (1 + sargs->variation));
+            }
             if(new_data[i][j] > max) {
                 max = new_data[i][j];
             }
@@ -175,10 +192,11 @@ static void get_toml_str(toml_table_t *t, const char *key, char **str)
     }
 }
 
-int parse_conf(const char *filename, struct sim_args *args)
+int parse_conf(const char *filename, struct sim_args *args,
+               struct sensor_args *sargs)
 {
     FILE *f;
-    toml_table_t *conf, *model, *sim, *sensors, *grid;
+    toml_table_t *conf, *model, *sim, *sensors, *grid, *env;
     toml_datum_t dat;
     toml_array_t *arr;
     char errbuf[200];
@@ -202,6 +220,7 @@ int parse_conf(const char *filename, struct sim_args *args)
     get_toml_pair(model, "wind", args->wind);
     get_toml_double(model, "baseline", &args->baseline);
     get_toml_int(model, "steps", &args->steps);
+    get_toml_double(model, "dt", &args->dt);
 
     grid = toml_table_in(model, "grid");
     get_toml_pair(grid, "min", args->min_coord);
@@ -211,6 +230,20 @@ int parse_conf(const char *filename, struct sim_args *args)
     sim = toml_table_in(conf, "sim");
     get_toml_int(sim, "out_steps", &args->out_steps);
     get_toml_str(sim, "out_dir", &args->sim_out_dir);
+
+    if(sargs) {
+        env = toml_table_in(conf, "environment");
+        get_toml_pair(env, "wind_shift", sargs->wind_shift);
+        get_toml_double(env, "variation", &sargs->variation);
+
+        sensors = toml_table_in(conf, "sensors");
+        get_toml_int(sensors, "count", &sargs->count);
+        get_toml_int(sensors, "interval", &sargs->interval);
+        get_toml_int(sensors, "rate", &sargs->rate);
+        get_toml_int(sensors, "mobile", &sargs->mobile);
+        get_toml_int(sensors, "speed", &sargs->speed);
+        get_toml_double(sensors, "noise", &sargs->noise);
+    }
 
     toml_free(conf);
 
@@ -233,4 +266,92 @@ int create_dir(const char *dir)
         // Directory already exists
         return 1;
     }
+}
+
+struct sim_grid *init_grid(struct sim_args *args, struct sensor_args *sargs)
+{
+    struct sim_grid *grid;
+    int i, j;
+
+    // Need a few more than this!
+    if(fabs(args->min_coord[LAT_IDX]) + fabs(args->min_coord[LONG_IDX]) ==
+           0.0 ||
+       fabs(args->max_coord[LAT_IDX]) + fabs(args->max_coord[LONG_IDX]) ==
+           0.0 ||
+       fabs(args->grid_deltas[LAT_IDX]) + fabs(args->grid_deltas[LONG_IDX]) ==
+           0.0) {
+        printf("Error: min, max, and grid deltas arguments are required.\n");
+        return NULL;
+    }
+
+    // Try to pick up some obvious errors
+    if(args->min_coord[LAT_IDX] > args->max_coord[LAT_IDX] ||
+       args->min_coord[LONG_IDX] > args->max_coord[LONG_IDX]) {
+        printf("Minimum coordinates should be smaller than maximum "
+               "coordinates.\n");
+        return NULL;
+    }
+
+    if(args->grid_deltas[LAT_IDX] <= 0 || args->grid_deltas[LONG_IDX] <= 0) {
+        printf("Grid deltas must be positive.\n");
+        return NULL;
+    }
+
+    grid = malloc(sizeof(*grid));
+    grid->nx =
+        1 + (int)((args->max_coord[LONG_IDX] - args->min_coord[LONG_IDX]) /
+                  args->grid_deltas[LONG_IDX]);
+    grid->ny = 1 + (int)((args->max_coord[LAT_IDX] - args->min_coord[LAT_IDX]) /
+                         args->grid_deltas[LAT_IDX]);
+
+    grid->args = args;
+    grid->sargs = sargs;
+
+    grid->plumex = -1;
+    grid->plumey = -1;
+    // This is a bad check, since (0,0) is an obvious coordinate to choose
+    if(args->plume_source[LAT_IDX] != 0 || args->plume_source[LONG_IDX] != 0) {
+        if(args->plume_source[LAT_IDX] <= args->min_coord[LAT_IDX] ||
+           args->plume_source[LAT_IDX] >= args->max_coord[LAT_IDX] ||
+           args->plume_source[LONG_IDX] <= args->min_coord[LONG_IDX]) {
+            printf("Plume must be between min and max coordinates.\n");
+            return NULL;
+        } else {
+            grid->plumex = (int)((args->plume_source[LONG_IDX] -
+                                  args->min_coord[LONG_IDX]) /
+                                 args->grid_deltas[LONG_IDX]);
+            grid->plumey =
+                (int)((args->plume_source[LAT_IDX] - args->min_coord[LAT_IDX]) /
+                      args->grid_deltas[LAT_IDX]);
+        }
+    }
+
+    grid->data = malloc(sizeof(*grid->data) * grid->ny);
+    grid->data[0] = malloc(sizeof(*grid->data[0]) * grid->nx * grid->ny);
+    for(i = 0; i < grid->ny; i++) {
+        if(i) {
+            grid->data[i] = &(grid->data[0][i * grid->nx]);
+        }
+        for(j = 0; j < grid->nx; j++) {
+            grid->data[i][j] = grid->args->baseline;
+        }
+    }
+
+    return (grid);
+}
+
+double uniform_sample_d_interval(double x0, double x1)
+{
+    double t;
+
+    if(x0 == x1)
+        return (x0);
+
+    if(x0 > x1) {
+        t = x0;
+        x0 = x1;
+        x1 = t;
+    }
+
+    return (x0 + ((x1 - x0) * (double)rand() / RAND_MAX));
 }

@@ -119,84 +119,17 @@ int parse_arguments(int argc, char *argv[], struct sim_args *args)
     }
 
     if(args->input_file) {
-        if(parse_conf(args->input_file, args) < 0) {
+        if(parse_conf(args->input_file, args, NULL) < 0) {
             free(args->input_file);
             args->input_file = NULL;
         }
     }
 
+    if(!args->dt) {
+        args->dt = .00001;
+    }
+
     return EXIT_SUCCESS;
-}
-
-struct sim_grid *init_grid(struct sim_args *args)
-{
-    struct sim_grid *grid;
-    int i, j;
-
-    // Need a few more than this!
-    if(fabs(args->min_coord[LAT_IDX]) + fabs(args->min_coord[LONG_IDX]) ==
-           0.0 ||
-       fabs(args->max_coord[LAT_IDX]) + fabs(args->max_coord[LONG_IDX]) ==
-           0.0 ||
-       fabs(args->grid_deltas[LAT_IDX]) + fabs(args->grid_deltas[LONG_IDX]) ==
-           0.0) {
-        printf("Error: min, max, and grid deltas arguments are required.\n");
-        return NULL;
-    }
-
-    // Try to pick up some obvious errors
-    if(args->min_coord[LAT_IDX] > args->max_coord[LAT_IDX] ||
-       args->min_coord[LONG_IDX] > args->max_coord[LONG_IDX]) {
-        printf("Minimum coordinates should be smaller than maximum "
-               "coordinates.\n");
-        return NULL;
-    }
-
-    if(args->grid_deltas[LAT_IDX] <= 0 || args->grid_deltas[LONG_IDX] <= 0) {
-        printf("Grid deltas must be positive.\n");
-        return NULL;
-    }
-
-    grid = malloc(sizeof(*grid));
-    grid->nx =
-        1 + (int)((args->max_coord[LONG_IDX] - args->min_coord[LONG_IDX]) /
-                  args->grid_deltas[LONG_IDX]);
-    grid->ny = 1 + (int)((args->max_coord[LAT_IDX] - args->min_coord[LAT_IDX]) /
-                         args->grid_deltas[LAT_IDX]);
-
-    grid->args = args;
-
-    grid->plumex = -1;
-    grid->plumey = -1;
-    // This is a bad check, since (0,0) is an obvious coordinate to choose
-    if(args->plume_source[LAT_IDX] != 0 || args->plume_source[LONG_IDX] != 0) {
-        if(args->plume_source[LAT_IDX] <= args->min_coord[LAT_IDX] ||
-           args->plume_source[LAT_IDX] >= args->max_coord[LAT_IDX] ||
-           args->plume_source[LONG_IDX] <= args->min_coord[LONG_IDX]) {
-            printf("Plume must be between min and max coordinates.\n");
-            return NULL;
-        } else {
-            grid->plumex = (int)((args->plume_source[LONG_IDX] -
-                                  args->min_coord[LONG_IDX]) /
-                                 args->grid_deltas[LONG_IDX]);
-            grid->plumey =
-                (int)((args->plume_source[LAT_IDX] - args->min_coord[LAT_IDX]) /
-                      args->grid_deltas[LAT_IDX]);
-        }
-    }
-
-    grid->data = malloc(sizeof(*grid->data) * grid->ny);
-    grid->data[0] = malloc(sizeof(*grid->data[0]) * grid->nx * grid->ny);
-    for(i = 0; i < grid->ny; i++) {
-        if(i) {
-            grid->data[i] = &(grid->data[0][i * grid->nx]);
-        }
-        for(j = 0; j < grid->nx; j++) {
-            grid->data[i][j] = grid->args->baseline;
-        }
-    }
-
-    return (grid);
 }
 
 int main(int argc, char *argv[])
@@ -206,14 +139,13 @@ int main(int argc, char *argv[])
     char outbase[100], outfile[100];
     double max;
     double too_big = 5000;
-
     int t;
 
     if(parse_arguments(argc, argv, &args)) {
         return EXIT_FAILURE;
     }
 
-    grid = init_grid(&args);
+    grid = init_grid(&args, NULL);
     if(!grid) {
         return EXIT_FAILURE;
     }
@@ -236,7 +168,7 @@ int main(int argc, char *argv[])
     printf("\n");
 
     for(t = 0; t < args.steps; t++) {
-        max = convect_diffuse(grid, .00001);
+        max = convect_diffuse(grid, NULL);
         if((args.out_steps && t % args.out_steps == 0) || max > too_big) {
             printf("Step %i\n", t);
             sprintf(outfile, "%s%i.dat", outbase, t);

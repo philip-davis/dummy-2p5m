@@ -3,6 +3,7 @@ plume = [-39, 46.2]
 wind = [15, 25]
 baseline = 2
 steps = 100_000
+dt = 0.00001
 
 [model.grid]
 min = [-40, 45]
@@ -13,5 +14,14 @@ delta = [0.05, 0.05]
 out_steps = 1_000
 out_dir = "sim_out"
 
+[environment]
+wind_shift = [1, 1]
+variation = 0.05
+
 [sensors]
 count = 100
+interval = 100
+rate = 10
+mobile = 10
+speed = 8
+noise = 0.05
