@@ -125,6 +125,8 @@ int parse_arguments(int argc, char *argv[], struct sim_args *args)
         }
     }
 
+    args->diffusivity = 1.0;
+
     if(!args->dt) {
         args->dt = .00001;
     }

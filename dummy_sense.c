@@ -123,6 +123,8 @@ int parse_arguments(int argc, char *argv[], struct sim_args *args,
         return EXIT_FAILURE;
     }
 
+    args->diffusivity = 1.0;
+
     if(args->input_file) {
         if(parse_conf(args->input_file, args, sargs) < 0) {
             free(args->input_file);
