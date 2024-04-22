@@ -140,7 +140,7 @@ double convect_diffuse(struct sim_grid *grid, struct sensor_args *sargs)
 
     // plume source
     if(grid->plumex != -1 && grid->plumey != -1) {
-        new_data[grid->plumex][grid->plumey] += 10 * grid->args->baseline;
+        new_data[grid->plumex][grid->plumey] += grid->args->source;
     }
 
     memcpy(data[0], new_data[0], sizeof(*new_data[0]) * grid->nx * grid->ny);
@@ -219,6 +219,7 @@ int parse_conf(const char *filename, struct sim_args *args,
     get_toml_pair(model, "plume", args->plume_source);
     get_toml_pair(model, "wind", args->wind);
     get_toml_double(model, "baseline", &args->baseline);
+    get_toml_double(model, "source", &args->source);
     get_toml_int(model, "steps", &args->steps);
     get_toml_double(model, "dt", &args->dt);
 

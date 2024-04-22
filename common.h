@@ -13,10 +13,10 @@ struct sim_args {
         baseline has three effects:
             1. sets conditions at f(x,0)
             2. sets boundary conditons for tail end of convection
-            3. source injects 10 x baseline every t
     */
     double baseline;
-    int steps; // how many steps to simulate
+    double source; // injected at the plume every step
+    int steps;     // how many steps to simulate
     double dt;
 
     double min_coord[2];   // lower bounds of sim
