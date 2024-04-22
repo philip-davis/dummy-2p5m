@@ -16,3 +16,7 @@ Simulate convection-diffusion with a source. On a user-defined interval, the sol
 Generates a time series of environmental readings of a less-deterministic flow than `dummy_sim`.
 
 ## Configuration
+
+## Notes/Warnings
+
+Absolutely no stability checking. The use of Euler's method makes it very, very easy to get instablility at otherwise reasonable model paramters.
