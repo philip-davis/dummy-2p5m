@@ -49,29 +49,32 @@ void printf_grid(struct sim_grid *grid)
 double convect_diffuse(struct sim_grid *grid, struct sensor_args *sargs)
 {
     static double **new_data = NULL;
+    struct sim_args *args = grid->args;
     double i_bias, j_bias;
-    double w_lat = grid->args->wind[LAT_IDX];
-    double w_long = grid->args->wind[LONG_IDX];
-    double dx = grid->args->grid_deltas[LONG_IDX];
-    double dy = grid->args->grid_deltas[LAT_IDX];
+    double w_lat = args->wind[LAT_IDX];
+    double w_long = args->wind[LONG_IDX];
+    double dx = args->grid_deltas[LONG_IDX];
+    double dy = args->grid_deltas[LAT_IDX];
     double **data = grid->data;
     double conv_du, diff_du;
     double max = -1;
-    double dt = grid->args->dt;
+    double dt = args->dt;
+    int nx = grid->nx;
+    int ny = grid->ny;
     int i, j;
 
     // keep reusing the same static buffer
     if(!new_data) {
-        new_data = malloc(sizeof(*new_data) * grid->ny);
-        new_data[0] = malloc(sizeof(*new_data[0]) * grid->nx * grid->ny);
-        for(i = 1; i < grid->ny; i++) {
-            new_data[i] = &(new_data[0][i * grid->nx]);
+        new_data = malloc(sizeof(*new_data) * ny);
+        new_data[0] = malloc(sizeof(*new_data[0]) * nx * ny);
+        for(i = 1; i < ny; i++) {
+            new_data[i] = &(new_data[0][i * nx]);
         }
     }
 
     // TODO: fiddle with coefficients? Better put in some stability checks at
     // least.
-    for(i = 0; i < grid->ny; i++) {
+    for(i = 0; i < ny; i++) {
         /* the point of i_bias and j_bias is that we can be rational about
            convection at the boundaries towards which the wind is blowing, but
            we can't in the direction the wind is coming from (thar be monsters).
@@ -83,22 +86,21 @@ double convect_diffuse(struct sim_grid *grid, struct sensor_args *sargs)
            bug.
         */
         i_bias = (double)i - w_long;
-        for(j = 0; j < grid->nx; j++) {
+        for(j = 0; j < nx; j++) {
             if(sargs) {
                 // wind varies stochastically if wind shift is set
                 w_lat = uniform_sample_d_interval(
-                    grid->args->wind[LAT_IDX] - sargs->wind_shift[LAT_IDX],
-                    grid->args->wind[LAT_IDX] + sargs->wind_shift[LAT_IDX]);
+                    args->wind[LAT_IDX] - sargs->wind_shift[LAT_IDX],
+                    args->wind[LAT_IDX] + sargs->wind_shift[LAT_IDX]);
                 w_long = uniform_sample_d_interval(
-                    grid->args->wind[LONG_IDX] - sargs->wind_shift[LONG_IDX],
-                    grid->args->wind[LONG_IDX] + sargs->wind_shift[LONG_IDX]);
+                    args->wind[LONG_IDX] - sargs->wind_shift[LONG_IDX],
+                    args->wind[LONG_IDX] + sargs->wind_shift[LONG_IDX]);
                 i_bias = (double)i - w_long;
             }
             // Convection component
             j_bias = (double)j - w_lat;
             conv_du = 0;
-            if(i_bias > 0 && i_bias < grid->ny - 1 && j_bias > 0 &&
-               j_bias < grid->nx - 1) {
+            if(i_bias > 0 && i_bias < ny - 1 && j_bias > 0 && j_bias < nx - 1) {
                 // choose forward or backwards difference to align with the wind
                 // direction
                 if(w_long > 0) {
@@ -119,14 +121,15 @@ double convect_diffuse(struct sim_grid *grid, struct sensor_args *sargs)
 
             // Diffusion Component
             diff_du = 0;
-            if(i > 0 && i < grid->ny - 1 && j > 0 && j < grid->nx - 1) {
+            if(i > 0 && i < ny - 1 && j > 0 && j < nx - 1) {
                 diff_du += (data[i + 1][j] - 2 * data[i][j] + data[i - 1][j]) /
                            (dy * dy);
                 diff_du += (data[i][j + 1] - 2 * data[i][j] + data[i][j - 1]) /
                            (dx * dx);
             }
 
-            new_data[i][j] = data[i][j] + dt * (diff_du - conv_du);
+            new_data[i][j] =
+                data[i][j] + dt * (args->diffusivity * diff_du - conv_du);
             if(sargs && sargs->variation) {
                 new_data[i][j] = uniform_sample_d_interval(
                     new_data[i][j] * (1 - sargs->variation),
@@ -140,10 +143,10 @@ double convect_diffuse(struct sim_grid *grid, struct sensor_args *sargs)
 
     // plume source
     if(grid->plumex != -1 && grid->plumey != -1) {
-        new_data[grid->plumex][grid->plumey] += grid->args->source;
+        new_data[grid->plumex][grid->plumey] += args->source;
     }
 
-    memcpy(data[0], new_data[0], sizeof(*new_data[0]) * grid->nx * grid->ny);
+    memcpy(data[0], new_data[0], sizeof(*new_data[0]) * nx * ny);
 
     return (max);
 }
@@ -220,6 +223,7 @@ int parse_conf(const char *filename, struct sim_args *args,
     get_toml_pair(model, "wind", args->wind);
     get_toml_double(model, "baseline", &args->baseline);
     get_toml_double(model, "source", &args->source);
+    get_toml_double(model, "diffusivity", &args->diffusivity);
     get_toml_int(model, "steps", &args->steps);
     get_toml_double(model, "dt", &args->dt);
 

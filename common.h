@@ -15,9 +15,10 @@ struct sim_args {
             2. sets boundary conditons for tail end of convection
     */
     double baseline;
-    double source; // injected at the plume every step
-    int steps;     // how many steps to simulate
-    double dt;
+    double source;      // injected at the plume every step
+    double diffusivity; // coefficient of diffusion
+    int steps;          // how many steps to simulate
+    double dt;          // length of a timestep
 
     double min_coord[2];   // lower bounds of sim
     double max_coord[2];   // upper bounds of sim
