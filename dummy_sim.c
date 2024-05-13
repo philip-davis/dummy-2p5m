@@ -342,12 +342,12 @@ void exchange_ghosts(struct sim_app *app)
                     }
                     out_buf = ghost_buf[1];
                     for(j = 0; j < ghost_size; j++) {
-                        out_buf[j] = pgrid->data[j+1][(pgrid->nx)-2];
+                        out_buf[j] = pgrid->data[j+1][pgrid->nx];
                     }
                     break;
                 case NORTH_RANK:
                     ghost_size = pgrid->nx;
-                    out_buf = &pgrid->data[(pgrid->ny)-2][1];
+                    out_buf = &pgrid->data[pgrid->ny][1];
                     break;
                 case SOUTH_RANK:
                     ghost_size = pgrid->nx;
@@ -374,11 +374,11 @@ void exchange_ghosts(struct sim_app *app)
                 case EAST_RANK:
                     ystart = 1;
                     ymult = 1;
-                    xstart = pgrid->nx-1;
+                    xstart = pgrid->nx+1;
                     xmult = 0;
                     break;
                 case NORTH_RANK:
-                    ystart = pgrid->ny-1;
+                    ystart = pgrid->ny+1;
                     ymult = 0;
                     xstart = 1;
                     xmult = 1;
@@ -494,8 +494,7 @@ double convect_diffuse(struct sim_app *app)
     if(pgrid->plumex != -1 && pgrid->plumey != -1) {
         new_data[pgrid->plumey+1][pgrid->plumex+1] += args->source;
     }
-
-    //memcpy(data[0], new_data[0], sizeof(*new_data[0]) * nx * ny);
+    
     for(i = 1; i < pgrid->ny+1; i++) {
         memcpy(&data[i][1], &new_data[i][1], sizeof(*new_data[0]) * pgrid->nx);
     }
