@@ -219,7 +219,7 @@ int init_sim_grid(struct sim_app *app)
     pgrid->data[0] = malloc(sizeof(*pgrid->data[0]) * (pgrid->nx+2) * (pgrid->ny+2));
     for(i = 0; i < pgrid->ny+2; i++) {
         if(i) {
-            pgrid->data[i] = &(pgrid->data[0][i * pgrid->nx]);
+            pgrid->data[i] = &(pgrid->data[0][i * (pgrid->nx + 2)]);
         }
         for(j = 0; j < pgrid->nx+2; j++) {
             //pgrid->data[i][j] = args->baseline;
