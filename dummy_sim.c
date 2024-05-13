@@ -492,7 +492,7 @@ double convect_diffuse(struct sim_app *app)
 
     // plume source
     if(pgrid->plumex != -1 && pgrid->plumey != -1) {
-        new_data[pgrid->plumex+1][pgrid->plumey+1] += args->source;
+        new_data[pgrid->plumey+1][pgrid->plumex+1] += args->source;
     }
 
     //memcpy(data[0], new_data[0], sizeof(*new_data[0]) * nx * ny);
