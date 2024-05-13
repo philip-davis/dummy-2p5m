@@ -26,7 +26,6 @@ with open(sys.argv[1], "rb") as f:
 # Switched x and y at some point...should fix this
 data = a.reshape((nx, ny), order='F')
 
-
 fig, ax = plt.subplots()
 im = ax.imshow(data, extent = [lb1, ub1, lb2, ub2])
 ax.xaxis.set_major_locator(ticker.MultipleLocator(1.00))

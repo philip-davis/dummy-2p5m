@@ -222,8 +222,7 @@ int init_sim_grid(struct sim_app *app)
             pgrid->data[i] = &(pgrid->data[0][i * (pgrid->nx + 2)]);
         }
         for(j = 0; j < pgrid->nx+2; j++) {
-            //pgrid->data[i][j] = args->baseline;
-            pgrid->data[i][j] = i * pgrid->nx * i + j;
+            pgrid->data[i][j] = args->baseline;
         }
     }
 
@@ -439,7 +438,7 @@ double convect_diffuse(struct sim_app *app)
 
     // TODO: fiddle with coefficients? Better put in some stability checks at
     // least.
-    for(i = 1; i < ny-1; i++) {
+    for(i = 1; i < ny+1; i++) {
         /* the point of i_bias and j_bias is that we can be rational about
            convection at the boundaries towards which the wind is blowing, but
            we can't in the direction the wind is coming from (thar be monsters).
@@ -450,10 +449,10 @@ double convect_diffuse(struct sim_app *app)
             Very small values in the wind vector might cause a round-off error
            bug.
         */
-        i_bias = (double)(oy + i) - w_long;
-        for(j = 1; j < nx-1; j++) {
+        i_bias = (double)(oy + (i-1)) - w_long;
+        for(j = 1; j < nx+1; j++) {
             // Convection component
-            j_bias = (double)(ox + j) - w_lat;
+            j_bias = (double)(ox + (j-1)) - w_lat;
             conv_du = 0;
             if(i_bias > 0 && i_bias < gy - 1 && j_bias > 0 && j_bias < gx - 1) {
                 // choose forward or backwards difference to align with the wind
@@ -497,8 +496,8 @@ double convect_diffuse(struct sim_app *app)
     }
 
     //memcpy(data[0], new_data[0], sizeof(*new_data[0]) * nx * ny);
-    for(i = 1; i < pgrid->ny-1; i++) {
-        //memcpy(&data[i][1], &new_data[i][1], sizeof(*new_data[0]) * pgrid->nx-2);
+    for(i = 1; i < pgrid->ny+1; i++) {
+        memcpy(&data[i][1], &new_data[i][1], sizeof(*new_data[0]) * pgrid->nx);
     }
 
     return (max);
