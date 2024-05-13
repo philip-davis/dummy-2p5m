@@ -7,6 +7,7 @@
 #define LONG_IDX 1
 
 struct sim_args {
+    int plume;              // is there a plume?
     double plume_source[2]; // source location
     double wind[2];         // wind (convection) vector
     /*
@@ -16,6 +17,7 @@ struct sim_args {
     */
     double baseline;
     double source;      // injected at the plume every step
+    double fuel_level;  // baseline fuel level
     double diffusivity; // coefficient of diffusion
     int steps;          // how many steps to simulate
     double dt;          // length of a timestep
@@ -48,6 +50,8 @@ struct sim_grid {
     int nx, ny;                // number of columns and rows
     int plumex, plumey;        // plume/source matrix indices
     double **data;             // the data matrix
+    double **fuel;             // available fuel
+    double **fire;             // fire intensity
     struct sim_args *args;     // inputed simulation parameters
     struct sensor_args *sargs; // inputed sensor parameters
 };
@@ -62,16 +66,6 @@ struct sim_grid *init_grid(struct sim_args *args, struct sensor_args *sargs);
         Print the grid paramters (not the grid data)
 */
 void printf_grid(struct sim_grid *grid);
-
-/*
-    Do a convection-diffusion step with explicit advance (Euler's method)
-    The diffusion and convection coefficients are trivial, and numerical
-    instability is VERY LIKELY for many values that result in a snappy
-    run time on a laptop.
-
-    Return the largest value in the new timestep (artifact of troubleshooting)
-*/
-double convect_diffuse(struct sim_grid *grid, struct sensor_args *sargs);
 
 /*
     Parse a .toml file to get startup arguments.
