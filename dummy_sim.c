@@ -185,8 +185,8 @@ int init_sim_grid(struct sim_app *app)
     pgrid->gy = 1 + (int)((args->max_coord[LAT_IDX] - args->min_coord[LAT_IDX]) /
                          args->grid_deltas[LAT_IDX]);
 
-    pgrid->nx = pgrid->gx / app->px;
-    pgrid->ny = pgrid->gy / app->py;
+    pgrid->nx = (pgrid->gx + app->px - 1) / app->px;
+    pgrid->ny = (pgrid->gy + app->py - 1) / app->py;
     pgrid->ox = pgrid->nx * app->x;
     pgrid->oy = pgrid->ny * app->y;
     if((pgrid->ox + pgrid->nx) >= pgrid->gx) {
@@ -255,6 +255,7 @@ void coords_from_rank(int px, int rank, int *x, int *y)
 
 int rank_from_coords(int px, int py, int x, int y)
 {
+
     if(x < 0 || x >= px || y < 0 || y >= py) {
         return(-1);
     }
@@ -266,10 +267,10 @@ void init_neighbors(struct sim_app *app)
     int nanks[4];
 
     coords_from_rank(app->px, app->rank, &app->x, &app->y);
-    app->nranks[WEST_RANK] = rank_from_coords(app->px, app->y, app->x-1, app->y);
-    app->nranks[EAST_RANK] = rank_from_coords(app->px, app->y, app->x+1, app->y);
-    app->nranks[SOUTH_RANK] = rank_from_coords(app->px, app->y, app->x, app->y-1);
-    app->nranks[NORTH_RANK] = rank_from_coords(app->px, app->y, app->x, app->y+1);
+    app->nranks[WEST_RANK] = rank_from_coords(app->px, app->py, app->x-1, app->y);
+    app->nranks[EAST_RANK] = rank_from_coords(app->px, app->py, app->x+1, app->y);
+    app->nranks[SOUTH_RANK] = rank_from_coords(app->px, app->py, app->x, app->y-1);
+    app->nranks[NORTH_RANK] = rank_from_coords(app->px, app->py, app->x, app->y+1);
 }
 
 int init_sim_app(int argc, char **argv, struct sim_app *app)
@@ -306,7 +307,7 @@ int init_sim_app(int argc, char **argv, struct sim_app *app)
     if(init_sim_grid(app)) {
         return EXIT_FAILURE;
     }
-
+    
     return EXIT_SUCCESS;
 }
 
@@ -319,7 +320,6 @@ void exchange_ghosts(struct sim_app *app)
     int xstart, ystart;
     int xmult, ymult;
     int ghost_size;
-
     int i, j;
 
     for(i = 0; i < 4; i++) {
@@ -509,7 +509,7 @@ void fwrite_pgrid_data(struct sim_app *app, const char *filename, int step)
     static double *recv_buf = NULL;
     static int *sizes = NULL;
     static int *dspls = NULL;
-    static MPI_Datatype send_type;
+    static MPI_Datatype *send_type = NULL;
     struct sim_pgrid *pgrid = &app->pgrid;
     int arrsizes[2], subsizes[2], starts[2];
     int ox, oy, nx, ny;
@@ -529,16 +529,19 @@ void fwrite_pgrid_data(struct sim_app *app, const char *filename, int step)
             dspls[i+1] = dspls[i] + sizes[i];
         }
         sizes[i] = app->bounds[i][2] * app->bounds[i][3];
+    }
+    if(!send_type) {
         arrsizes[1] = pgrid->nx+2;
         arrsizes[0] = pgrid->ny+2;
         subsizes[1] = pgrid->nx;
         subsizes[0] = pgrid->ny;
         starts[0] = 1;
         starts[1] = 1;
-        MPI_Type_create_subarray(2, arrsizes, subsizes, starts, MPI_ORDER_C, MPI_DOUBLE, &send_type);
-        MPI_Type_commit(&send_type);
+        send_type = malloc(sizeof(*send_type));
+        MPI_Type_create_subarray(2, arrsizes, subsizes, starts, MPI_ORDER_C, MPI_DOUBLE, send_type);
+        MPI_Type_commit(send_type);
     } 
-    MPI_Isend(pgrid->data[0], 1, send_type, 0, 0, app->comm, &req);
+    MPI_Isend(pgrid->data[0], 1, *send_type, 0, 0, app->comm, &req);
     if(!app->rank) {
         for(i = 0; i < app->size; i++) {
             rdata = &recv_buf[dspls[i]];
