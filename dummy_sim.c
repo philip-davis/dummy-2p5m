@@ -540,7 +540,7 @@ void fwrite_pgrid_data(struct sim_app *app, const char *filename, int step)
         send_type = malloc(sizeof(*send_type));
         MPI_Type_create_subarray(2, arrsizes, subsizes, starts, MPI_ORDER_C, MPI_DOUBLE, send_type);
         MPI_Type_commit(send_type);
-    } 
+    }
     MPI_Isend(pgrid->data[0], 1, *send_type, 0, 0, app->comm, &req);
     if(!app->rank) {
         for(i = 0; i < app->size; i++) {
@@ -553,7 +553,7 @@ void fwrite_pgrid_data(struct sim_app *app, const char *filename, int step)
             for(j = 0; j < ny; j++) {
                 for(k = 0; k < nx; k++) {
                     lidx = j * nx + k;
-                    gidx = ((oy + j) * pgrid->nx) + (ox + k);
+                    gidx = ((oy + j) * pgrid->gx) + (ox + k);
                     gdata[gidx] = rdata[lidx];
                 }
             }
