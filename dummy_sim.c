@@ -215,7 +215,7 @@ int init_sim_grid(struct sim_app *app)
     }
 
     // expand for ghosts
-    pgrid->data = malloc(sizeof(*pgrid->data) * pgrid->ny+2);
+    pgrid->data = malloc(sizeof(*pgrid->data) * (pgrid->ny + 2));
     pgrid->data[0] = malloc(sizeof(*pgrid->data[0]) * (pgrid->nx+2) * (pgrid->ny+2));
     for(i = 0; i < pgrid->ny+2; i++) {
         if(i) {
