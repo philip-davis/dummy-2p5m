@@ -449,10 +449,10 @@ double convect_diffuse(struct sim_app *app)
             Very small values in the wind vector might cause a round-off error
            bug.
         */
-        i_bias = (double)(oy + (i-1)) - w_long;
+        i_bias = (double)(oy + (i-1)) - ((w_long>0)?0.5:-0.5);
         for(j = 1; j < nx+1; j++) {
             // Convection component
-            j_bias = (double)(ox + (j-1)) - w_lat;
+            j_bias = (double)(ox + (j-1)) - ((w_lat>0)?0.5:-0.5);
             conv_du = 0;
             if(i_bias > 0 && i_bias < gy - 1 && j_bias > 0 && j_bias < gx - 1) {
                 // choose forward or backwards difference to align with the wind
