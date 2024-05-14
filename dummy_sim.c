@@ -475,7 +475,7 @@ double convect_diffuse(struct sim_app *app)
 
             // Diffusion Component
             diff_du = 0;
-            if(i > 0 && i < gy - 1 && j > 0 && j < gx - 1) {
+            if(i > 0 && (pgrid->oy + i) < (gy - 1) && j > 0 && (pgrid->ox + j) < (gx - 1)) {
                 diff_du += (data[i + 1][j] - 2 * data[i][j] + data[i - 1][j]) /
                            (dy * dy);
                 diff_du += (data[i][j + 1] - 2 * data[i][j] + data[i][j - 1]) /
@@ -487,6 +487,12 @@ double convect_diffuse(struct sim_app *app)
             if(new_data[i][j] > max) {
                 max = new_data[i][j];
             }
+            /*
+            if(step == 1185 && (pgrid->ox + j == 60 && pgrid->oy + i == 24)) {
+                int *a = NULL;
+                int b = *a;
+            }
+            */
         }
     }
 
