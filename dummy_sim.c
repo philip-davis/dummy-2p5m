@@ -673,6 +673,7 @@ static double sensor_dist(struct sim_app *app, int t)
         printf("rank: %i, local_count = %i\n", app->rank, local_count);
     if(app->rank) {
         if(local_count > rb_size) {
+            rb_size = local_count;
             reading_buffer =
                 realloc(reading_buffer, sizeof(*reading_buffer) * rb_size);
         }
