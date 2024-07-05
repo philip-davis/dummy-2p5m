@@ -5,18 +5,6 @@
 
 #include "common.h"
 
-struct sensor {
-    int loc[2];
-    int fine_loc[2];
-    int mobile;
-};
-
-struct reading {
-    int id;
-    double loc[2];
-    double value;
-};
-
 /*
     Do a convection-diffusion step with explicit advance (Euler's method)
     The diffusion and convection coefficients are trivial, and numerical
@@ -129,7 +117,6 @@ double convect_diffuse(struct sim_grid *grid, struct sensor_args *sargs)
 
     return (max);
 }
-
 
 /*
     allocate a sensor array. Each sensor has a locaiton (nearby
@@ -435,6 +422,7 @@ int main(int argc, char *argv[])
     char outbase[100], outfile[100];
     struct reading *readings;
     int num_reads;
+    FILE *fout;
     int i, t;
 
     if(parse_arguments(argc, argv, &args, &sargs)) {
@@ -451,16 +439,26 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
+    if(args.sensor_stream) {
+        fout = fopen(args.sensor_stream, "w");
+    } else {
+        fout = stdout;
+    }
+
     for(t = 0; t < args.steps; t++) {
         max = convect_diffuse(grid, &sargs);
         if(sargs.interval && t % sargs.interval == 0) {
             move_sensors(grid, sarray);
             num_reads = gather_readings(grid, sarray, &readings);
             for(i = 0; i < num_reads; i++) {
-                printf("{ t:%i, loc: (%lf, %lf), value: %lf }\n", t,
-                       readings[i].loc[0], readings[i].loc[1],
-                       readings[i].value);
+                fprintf(fout, "{ t:%i, loc: (%lf, %lf), value: %lf }\n", t,
+                        readings[i].loc[0], readings[i].loc[1],
+                        readings[i].value);
             }
         }
+    }
+
+    if(args.sensor_stream) {
+        fclose(fout);
     }
 }

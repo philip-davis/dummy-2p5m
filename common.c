@@ -57,20 +57,23 @@ static int get_toml_pair(toml_table_t *t, const char *key, double d[2])
         d[LAT_IDX] = dat.u.d;
         dat = toml_double_at(arr, 1);
         d[LONG_IDX] = dat.u.d;
-        return(1);
+        return (1);
     }
 
-    return(0);
+    return (0);
 }
 
-static void get_toml_int(toml_table_t *t, const char *key, int *i)
+static int get_toml_int(toml_table_t *t, const char *key, int *i)
 {
     toml_datum_t dat;
 
     if(toml_key_exists(t, key)) {
         dat = toml_int_in(t, key);
         *i = dat.u.i;
+        return (1);
     }
+
+    return (0);
 }
 
 static void get_toml_double(toml_table_t *t, const char *key, double *d)
@@ -98,6 +101,7 @@ int parse_conf(const char *filename, struct sim_args *args,
 {
     FILE *f;
     toml_table_t *conf, *model, *sim, *sensors, *grid, *env;
+    toml_table_t *validate;
     toml_datum_t dat;
     toml_array_t *arr;
     char errbuf[200];
@@ -135,6 +139,12 @@ int parse_conf(const char *filename, struct sim_args *args,
     sim = toml_table_in(conf, "sim");
     get_toml_int(sim, "out_steps", &args->out_steps);
     get_toml_str(sim, "out_dir", &args->sim_out_dir);
+
+    validate = toml_table_in(conf, "validate");
+    if(validate) {
+        get_toml_int(validate, "validate_steps", &args->val_steps);
+        get_toml_str(validate, "sensor_stream", &args->sensor_stream);
+    }
 
     if(sargs) {
         env = toml_table_in(conf, "environment");

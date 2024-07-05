@@ -6,6 +6,18 @@
 #define LAT_IDX 0
 #define LONG_IDX 1
 
+struct sensor {
+    int loc[2];
+    int fine_loc[2];
+    int mobile;
+};
+
+struct reading {
+    int id;
+    double loc[2];
+    double value;
+};
+
 struct sim_args {
     int plume;              // is there a plume?
     double plume_source[2]; // source location
@@ -28,6 +40,9 @@ struct sim_args {
 
     int out_steps;     // how often to create output file
     char *sim_out_dir; // simulation output folder
+
+    int val_steps;       // how often is data validated
+    char *sensor_stream; // file containing sensor readings
 
     char *input_file; // shared toml config file
 };

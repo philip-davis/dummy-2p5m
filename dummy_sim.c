@@ -1,9 +1,9 @@
 #include <getopt.h>
 #include <math.h>
+#include <mpi.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <mpi.h>
 
 #include "common.h"
 #include "toml.h"
@@ -13,7 +13,7 @@ struct sim_pgrid {
     int ox, oy;                // offset within the global grid
     int gx, gy;                // global grid size
     int plumex, plumey;        // plume/source matrix indices
-    double *ghost[4];        // ghost regions 
+    double *ghost[4];          // ghost regions
     double **data;             // the data matrix
     double **fuel;             // available fuel
     double **fire;             // fire intensity
@@ -31,11 +31,12 @@ struct sim_app {
     struct sim_args args;
     struct sim_pgrid pgrid;
     MPI_Comm comm;
-    int nranks[4];             // neighbor ranks
+    int nranks[4]; // neighbor ranks
     int rank;
     int size;
-    int px, py;                // process dimensions
-    int x, y;                  // this rank's process coordinates
+    int px, py; // process dimensions
+    int x, y;   // this rank's process coordinates
+    FILE *sstream;
 };
 
 /*
@@ -44,7 +45,8 @@ struct sim_app {
         - filename: the filname to write to
         - step: which step is this (stored in the header)
 */
-void fwrite_grid_data(struct sim_pgrid *pgrid, double *data, const char *filename, int step)
+void fwrite_grid_data(struct sim_pgrid *pgrid, double *data,
+                      const char *filename, int step)
 {
     FILE *file = fopen(filename, "wb");
 
@@ -52,15 +54,16 @@ void fwrite_grid_data(struct sim_pgrid *pgrid, double *data, const char *filenam
         fwrite(&step, sizeof(step), 1, file);
         fwrite(&pgrid->gx, sizeof(pgrid->gx), 1, file);
         fwrite(&pgrid->gy, sizeof(pgrid->gy), 1, file);
-        fwrite(pgrid->args->min_coord, sizeof(*pgrid->args->min_coord), 2, file);
-        fwrite(pgrid->args->max_coord, sizeof(*pgrid->args->min_coord), 2, file);
+        fwrite(pgrid->args->min_coord, sizeof(*pgrid->args->min_coord), 2,
+               file);
+        fwrite(pgrid->args->max_coord, sizeof(*pgrid->args->min_coord), 2,
+               file);
         fwrite(pgrid->args->plume_source, sizeof(*pgrid->args->plume_source), 2,
                file);
         fwrite(pgrid->args->wind, sizeof(*pgrid->args->wind), 2, file);
 
         // Write the array data to the file
-        fwrite(data, sizeof(*data), pgrid->gx * pgrid->gy,
-               file);
+        fwrite(data, sizeof(*data), pgrid->gx * pgrid->gy, file);
 
         fclose(file); // Close the file
     } else {
@@ -89,7 +92,10 @@ int parse_arguments(int argc, char *argv[], struct sim_app *app)
             sscanf(optarg, "%i,%i", &app->px, &app->py);
             break;
         default:
-            fprintf(stderr, "Usage: %s --input_file <filename> --ranks <integer, integer>\n", argv[0]);
+            fprintf(stderr,
+                    "Usage: %s --input_file <filename> --ranks <integer, "
+                    "integer>\n",
+                    argv[0]);
             return EXIT_FAILURE;
         }
     }
@@ -101,55 +107,64 @@ int validate_args(struct sim_app *app)
 {
     if(app->size != app->px * app->py) {
         if(!app->rank) {
-            fprintf(stderr, "ERROR: %i rank(s), but %i expected.\n", app->size, (app->px * app->py));
+            fprintf(stderr, "ERROR: %i rank(s), but %i expected.\n", app->size,
+                    (app->px * app->py));
         }
         return EXIT_FAILURE;
     }
     return EXIT_SUCCESS;
 }
 
-int validate_config(struct sim_app *app) 
+int validate_config(struct sim_app *app)
 {
     struct sim_args *args = &app->args;
     int config_bad = 0;
 
     if(args->steps <= 0) {
         if(!app->rank) {
-            fprintf(stderr, "INVALID CONFIG: model.steps should be present and positive.\n");
+            fprintf(stderr, "INVALID CONFIG: model.steps should be present and "
+                            "positive.\n");
         }
         config_bad = 1;
     }
     if((args->min_coord[LAT_IDX] == args->max_coord[LAT_IDX]) ||
-        (args->min_coord[LONG_IDX] == args->max_coord[LONG_IDX])) {
+       (args->min_coord[LONG_IDX] == args->max_coord[LONG_IDX])) {
         if(!app->rank) {
-            fprintf(stderr, "INVALID CONFIG: model.grid.min should be less than modle.grid.max.\n");
+            fprintf(stderr, "INVALID CONFIG: model.grid.min should be less "
+                            "than modle.grid.max.\n");
         }
         config_bad = 1;
     }
     if((args->grid_deltas[LAT_IDX] * args->grid_deltas[LONG_IDX]) == 0) {
         if(!app->rank) {
-            fprintf(stderr, "INVALID CONFIG: model.grid.delta must be populated and positive in both dimensions.\n");
+            fprintf(stderr, "INVALID CONFIG: model.grid.delta must be "
+                            "populated and positive in both dimensions.\n");
         }
         config_bad = 1;
     }
     if(args->dt <= 0) {
         if(!app->rank) {
-            fprintf(stderr, "INVALID CONFIG: model.dt must be populated and positive.\n");
+            fprintf(
+                stderr,
+                "INVALID CONFIG: model.dt must be populated and positive.\n");
         }
         config_bad = 1;
     }
     if(args->diffusivity == 0) {
-         if(!app->rank) {
-            fprintf(stderr, "INVALID CONFIG: diffusivity zero is invalid...changing to 1.0\n");
+        if(!app->rank) {
+            fprintf(stderr, "INVALID CONFIG: diffusivity zero is "
+                            "invalid...changing to 1.0\n");
         }
         args->diffusivity = 1.0;
     }
-    if(args->plume && (args->plume_source[LAT_IDX] <= args->min_coord[LAT_IDX] ||
+    if(args->plume &&
+       (args->plume_source[LAT_IDX] <= args->min_coord[LAT_IDX] ||
         args->plume_source[LAT_IDX] >= args->max_coord[LAT_IDX] ||
         args->plume_source[LONG_IDX] <= args->min_coord[LONG_IDX] ||
         args->plume_source[LONG_IDX] >= args->max_coord[LONG_IDX])) {
         if(!app->rank) {
-            fprintf(stderr, "INVALID CONFIG: plume must be between min and max coordinates.\n");
+            fprintf(stderr, "INVALID CONFIG: plume must be between min and max "
+                            "coordinates.\n");
         }
         config_bad = 1;
     }
@@ -163,9 +178,9 @@ int validate_config(struct sim_app *app)
 int x_y_within_coords(int x, int y, int lbx, int lby, int lx, int ly)
 {
     if(x >= lbx && x < lbx + lx && y >= lby && y < lby + ly) {
-        return(1);
+        return (1);
     }
-    return(0);
+    return (0);
 }
 
 int init_sim_grid(struct sim_app *app)
@@ -182,8 +197,9 @@ int init_sim_grid(struct sim_app *app)
     pgrid->gx =
         1 + (int)((args->max_coord[LONG_IDX] - args->min_coord[LONG_IDX]) /
                   args->grid_deltas[LONG_IDX]);
-    pgrid->gy = 1 + (int)((args->max_coord[LAT_IDX] - args->min_coord[LAT_IDX]) /
-                         args->grid_deltas[LAT_IDX]);
+    pgrid->gy =
+        1 + (int)((args->max_coord[LAT_IDX] - args->min_coord[LAT_IDX]) /
+                  args->grid_deltas[LAT_IDX]);
 
     pgrid->nx = (pgrid->gx + app->px - 1) / app->px;
     pgrid->ny = (pgrid->gy + app->py - 1) / app->py;
@@ -198,15 +214,16 @@ int init_sim_grid(struct sim_app *app)
 
     pgrid->plumex = -1;
     pgrid->plumey = -1;
-    
+
     if(args->plume) {
-        gplumex = (int)((args->plume_source[LONG_IDX] -
-                                  args->min_coord[LONG_IDX]) /
-                                 args->grid_deltas[LONG_IDX]);
+        gplumex =
+            (int)((args->plume_source[LONG_IDX] - args->min_coord[LONG_IDX]) /
+                  args->grid_deltas[LONG_IDX]);
         gplumey =
             (int)((args->plume_source[LAT_IDX] - args->min_coord[LAT_IDX]) /
-                    args->grid_deltas[LAT_IDX]);
-        if(x_y_within_coords(gplumex, gplumey, pgrid->ox, pgrid->oy, pgrid->nx, pgrid->ny)) {
+                  args->grid_deltas[LAT_IDX]);
+        if(x_y_within_coords(gplumex, gplumey, pgrid->ox, pgrid->oy, pgrid->nx,
+                             pgrid->ny)) {
             pgrid->plumex = gplumex - pgrid->ox;
             pgrid->plumey = gplumey - pgrid->oy;
         } else {
@@ -216,20 +233,22 @@ int init_sim_grid(struct sim_app *app)
 
     // expand for ghosts
     pgrid->data = malloc(sizeof(*pgrid->data) * (pgrid->ny + 2));
-    pgrid->data[0] = malloc(sizeof(*pgrid->data[0]) * (pgrid->nx+2) * (pgrid->ny+2));
-    for(i = 0; i < pgrid->ny+2; i++) {
+    pgrid->data[0] =
+        malloc(sizeof(*pgrid->data[0]) * (pgrid->nx + 2) * (pgrid->ny + 2));
+    for(i = 0; i < pgrid->ny + 2; i++) {
         if(i) {
             pgrid->data[i] = &(pgrid->data[0][i * (pgrid->nx + 2)]);
         }
-        for(j = 0; j < pgrid->nx+2; j++) {
+        for(j = 0; j < pgrid->nx + 2; j++) {
             pgrid->data[i][j] = args->baseline;
         }
     }
 
     for(i = 0; i < 4; i++) {
         if(app->nranks[i] > -1) {
-            pgrid->ghost[i] = malloc(sizeof(*pgrid->ghost[i]) *
-                                ((i==WEST_RANK||i==EAST_RANK)?pgrid->ny:pgrid->nx));
+            pgrid->ghost[i] = malloc(
+                sizeof(*pgrid->ghost[i]) *
+                ((i == WEST_RANK || i == EAST_RANK) ? pgrid->ny : pgrid->nx));
         } else {
             pgrid->ghost[i] = NULL;
         }
@@ -257,9 +276,45 @@ int rank_from_coords(int px, int py, int x, int y)
 {
 
     if(x < 0 || x >= px || y < 0 || y >= py) {
-        return(-1);
+        return (-1);
     }
-    return(y * px + x);
+    return (y * px + x);
+}
+
+int rank_from_geocoords(struct sim_app *app, double loc[2])
+{
+    struct sim_args *args = &app->args;
+    struct sim_pgrid *pgrid = &app->pgrid;
+    int x, y;
+    int xp, yp;
+    int rank;
+
+    if(loc[LONG_IDX] < args->min_coord[LONG_IDX] ||
+       loc[LONG_IDX] > args->max_coord[LONG_IDX] ||
+       loc[LAT_IDX] < args->min_coord[LAT_IDX] ||
+       loc[LAT_IDX] > args->max_coord[LONG_IDX]) {
+        fprintf(
+            stderr,
+            "ERROR: %s: (%f, %f) not within min: (%lf, %lf), max: (%lf, %lf)\n",
+            __func__, loc[LONG_IDX], loc[LAT_IDX], args->min_coord[LONG_IDX],
+            args->min_coord[LAT_IDX], args->max_coord[LONG_IDX],
+            args->max_coord[LAT_IDX]);
+        return (-1);
+    }
+
+    y = (loc[LAT_IDX] - args->min_coord[LAT_IDX]) / args->grid_deltas[LAT_IDX];
+    x = (loc[LONG_IDX] - args->min_coord[LONG_IDX]) /
+        args->grid_deltas[LONG_IDX];
+
+    yp = y / (pgrid->gy / app->py);
+    xp = x / (pgrid->gx / app->px);
+
+    rank = rank_from_coords(app->px, app->py, xp, yp);
+    if(rank == -1) {
+        fprintf(stderr, "ERROR: %s: (%i, %i) is not withing %i x %i.\n",
+                __func__, xp, yp, app->px, app->py);
+    }
+    return (rank);
 }
 
 void init_neighbors(struct sim_app *app)
@@ -267,10 +322,14 @@ void init_neighbors(struct sim_app *app)
     int nanks[4];
 
     coords_from_rank(app->px, app->rank, &app->x, &app->y);
-    app->nranks[WEST_RANK] = rank_from_coords(app->px, app->py, app->x-1, app->y);
-    app->nranks[EAST_RANK] = rank_from_coords(app->px, app->py, app->x+1, app->y);
-    app->nranks[SOUTH_RANK] = rank_from_coords(app->px, app->py, app->x, app->y-1);
-    app->nranks[NORTH_RANK] = rank_from_coords(app->px, app->py, app->x, app->y+1);
+    app->nranks[WEST_RANK] =
+        rank_from_coords(app->px, app->py, app->x - 1, app->y);
+    app->nranks[EAST_RANK] =
+        rank_from_coords(app->px, app->py, app->x + 1, app->y);
+    app->nranks[SOUTH_RANK] =
+        rank_from_coords(app->px, app->py, app->x, app->y - 1);
+    app->nranks[NORTH_RANK] =
+        rank_from_coords(app->px, app->py, app->x, app->y + 1);
 }
 
 int init_sim_app(int argc, char **argv, struct sim_app *app)
@@ -296,7 +355,7 @@ int init_sim_app(int argc, char **argv, struct sim_app *app)
 
     MPI_Bcast(&app->args, sizeof(app->args), MPI_BYTE, 0, app->comm);
     if(app->args.steps == -1) {
-        //Config was bad
+        // Config was bad
         return EXIT_FAILURE;
     }
 
@@ -307,7 +366,11 @@ int init_sim_app(int argc, char **argv, struct sim_app *app)
     if(init_sim_grid(app)) {
         return EXIT_FAILURE;
     }
-    
+
+    if(!app->rank && app->args.sensor_stream) {
+        app->sstream = fopen(app->args.sensor_stream, "r");
+    }
+
     return EXIT_SUCCESS;
 }
 
@@ -325,73 +388,77 @@ void exchange_ghosts(struct sim_app *app)
     for(i = 0; i < 4; i++) {
         if(app->nranks[i] > -1) {
             switch(i) {
-                case WEST_RANK:
-                    ghost_size = pgrid->ny;
-                    if(ghost_buf[0] == NULL) {
-                        ghost_buf[0] = malloc(sizeof(**ghost_buf) * ghost_size);
-                    }
-                    out_buf = ghost_buf[0];
-                    for(j = 0; j < ghost_size; j++) {
-                        out_buf[j] = pgrid->data[j+1][1];
-                    }
-                    break;
-                case EAST_RANK:
-                    ghost_size = pgrid->ny;
-                    if(ghost_buf[1] == NULL) {
-                        ghost_buf[1] = malloc(sizeof(**ghost_buf) * ghost_size);
-                    }
-                    out_buf = ghost_buf[1];
-                    for(j = 0; j < ghost_size; j++) {
-                        out_buf[j] = pgrid->data[j+1][pgrid->nx];
-                    }
-                    break;
-                case NORTH_RANK:
-                    ghost_size = pgrid->nx;
-                    out_buf = &pgrid->data[pgrid->ny][1];
-                    break;
-                case SOUTH_RANK:
-                    ghost_size = pgrid->nx;
-                    out_buf = &pgrid->data[1][1];
-                    break;
+            case WEST_RANK:
+                ghost_size = pgrid->ny;
+                if(ghost_buf[0] == NULL) {
+                    ghost_buf[0] = malloc(sizeof(**ghost_buf) * ghost_size);
+                }
+                out_buf = ghost_buf[0];
+                for(j = 0; j < ghost_size; j++) {
+                    out_buf[j] = pgrid->data[j + 1][1];
+                }
+                break;
+            case EAST_RANK:
+                ghost_size = pgrid->ny;
+                if(ghost_buf[1] == NULL) {
+                    ghost_buf[1] = malloc(sizeof(**ghost_buf) * ghost_size);
+                }
+                out_buf = ghost_buf[1];
+                for(j = 0; j < ghost_size; j++) {
+                    out_buf[j] = pgrid->data[j + 1][pgrid->nx];
+                }
+                break;
+            case NORTH_RANK:
+                ghost_size = pgrid->nx;
+                out_buf = &pgrid->data[pgrid->ny][1];
+                break;
+            case SOUTH_RANK:
+                ghost_size = pgrid->nx;
+                out_buf = &pgrid->data[1][1];
+                break;
             }
-            MPI_Isend(out_buf, ghost_size, MPI_DOUBLE, app->nranks[i], 0, app->comm, &send_req[i]);
+            MPI_Isend(out_buf, ghost_size, MPI_DOUBLE, app->nranks[i], 0,
+                      app->comm, &send_req[i]);
         }
     }
 
     for(i = 0; i < 4; i++) {
         if(app->nranks[i] > -1) {
             if(app->nranks[i] > -1) {
-                ghost_size = (i==EAST_RANK||i==WEST_RANK)?pgrid->ny:pgrid->nx;
-                MPI_Recv(pgrid->ghost[i], ghost_size, MPI_DOUBLE, app->nranks[i], 0, app->comm, MPI_STATUS_IGNORE);
+                ghost_size =
+                    (i == EAST_RANK || i == WEST_RANK) ? pgrid->ny : pgrid->nx;
+                MPI_Recv(pgrid->ghost[i], ghost_size, MPI_DOUBLE,
+                         app->nranks[i], 0, app->comm, MPI_STATUS_IGNORE);
             }
             switch(i) {
-                case WEST_RANK:
-                    ystart = 1;
-                    ymult = 1;
-                    xstart = 0;
-                    xmult = 0;
-                    break;
-                case EAST_RANK:
-                    ystart = 1;
-                    ymult = 1;
-                    xstart = pgrid->nx+1;
-                    xmult = 0;
-                    break;
-                case NORTH_RANK:
-                    ystart = pgrid->ny+1;
-                    ymult = 0;
-                    xstart = 1;
-                    xmult = 1;
-                    break;
-                case SOUTH_RANK:
-                    ystart = 0;
-                    ymult = 0;
-                    xstart = 1;
-                    xmult = 1;
-                    break;
+            case WEST_RANK:
+                ystart = 1;
+                ymult = 1;
+                xstart = 0;
+                xmult = 0;
+                break;
+            case EAST_RANK:
+                ystart = 1;
+                ymult = 1;
+                xstart = pgrid->nx + 1;
+                xmult = 0;
+                break;
+            case NORTH_RANK:
+                ystart = pgrid->ny + 1;
+                ymult = 0;
+                xstart = 1;
+                xmult = 1;
+                break;
+            case SOUTH_RANK:
+                ystart = 0;
+                ymult = 0;
+                xstart = 1;
+                xmult = 1;
+                break;
             }
             for(j = 0; j < ghost_size; j++) {
-                pgrid->data[ystart + j * ymult][xstart + j * xmult] = pgrid->ghost[i][j];
+                pgrid->data[ystart + j * ymult][xstart + j * xmult] =
+                    pgrid->ghost[i][j];
             }
         }
     }
@@ -429,16 +496,16 @@ double convect_diffuse(struct sim_app *app)
 
     // keep reusing the same static buffer
     if(!new_data) {
-        new_data = malloc(sizeof(*new_data) * (ny+2));
-        new_data[0] = malloc(sizeof(*new_data[0]) * (nx+2) * (ny+2));
-        for(i = 1; i < ny+2; i++) {
-            new_data[i] = &(new_data[0][i * (nx+2)]);
+        new_data = malloc(sizeof(*new_data) * (ny + 2));
+        new_data[0] = malloc(sizeof(*new_data[0]) * (nx + 2) * (ny + 2));
+        for(i = 1; i < ny + 2; i++) {
+            new_data[i] = &(new_data[0][i * (nx + 2)]);
         }
     }
 
     // TODO: fiddle with coefficients? Better put in some stability checks at
     // least.
-    for(i = 1; i < ny+1; i++) {
+    for(i = 1; i < ny + 1; i++) {
         /* the point of i_bias and j_bias is that we can be rational about
            convection at the boundaries towards which the wind is blowing, but
            we can't in the direction the wind is coming from (thar be monsters).
@@ -449,10 +516,10 @@ double convect_diffuse(struct sim_app *app)
             Very small values in the wind vector might cause a round-off error
            bug.
         */
-        i_bias = (double)(oy + (i-1)) - ((w_long>0)?0.5:-0.5);
-        for(j = 1; j < nx+1; j++) {
+        i_bias = (double)(oy + (i - 1)) - ((w_long > 0) ? 0.5 : -0.5);
+        for(j = 1; j < nx + 1; j++) {
             // Convection component
-            j_bias = (double)(ox + (j-1)) - ((w_lat>0)?0.5:-0.5);
+            j_bias = (double)(ox + (j - 1)) - ((w_lat > 0) ? 0.5 : -0.5);
             conv_du = 0;
             if(i_bias > 0 && i_bias < gy - 1 && j_bias > 0 && j_bias < gx - 1) {
                 // choose forward or backwards difference to align with the wind
@@ -475,7 +542,8 @@ double convect_diffuse(struct sim_app *app)
 
             // Diffusion Component
             diff_du = 0;
-            if(i > 0 && (pgrid->oy + i) < (gy - 1) && j > 0 && (pgrid->ox + j) < (gx - 1)) {
+            if(i > 0 && (pgrid->oy + i) < (gy - 1) && j > 0 &&
+               (pgrid->ox + j) < (gx - 1)) {
                 diff_du += (data[i + 1][j] - 2 * data[i][j] + data[i - 1][j]) /
                            (dy * dy);
                 diff_du += (data[i][j + 1] - 2 * data[i][j] + data[i][j - 1]) /
@@ -498,14 +566,133 @@ double convect_diffuse(struct sim_app *app)
 
     // plume source
     if(pgrid->plumex != -1 && pgrid->plumey != -1) {
-        new_data[pgrid->plumey+1][pgrid->plumex+1] += args->source;
+        new_data[pgrid->plumey + 1][pgrid->plumex + 1] += args->source;
     }
-    
-    for(i = 1; i < pgrid->ny+1; i++) {
+
+    for(i = 1; i < pgrid->ny + 1; i++) {
         memcpy(&data[i][1], &new_data[i][1], sizeof(*new_data[0]) * pgrid->nx);
     }
 
     return (max);
+}
+
+static void sort_readings(struct reading *r, int n)
+{
+    int start = n / 2;
+    int end = n;
+    int root, child;
+    struct reading tmp;
+
+    while(end > 1) {
+        if(start) {
+            start--;
+        } else {
+            end--;
+            tmp = r[end];
+            r[end] = r[0];
+            r[0] = tmp;
+        }
+
+        root = start;
+        while((2 * root + 1) < end) {
+            child = 2 * root + 1;
+            if(child + 1 < end && (r[child].id < r[child + 1].id)) {
+                child++;
+            }
+            if(r[root].id < r[child].id) {
+                tmp = r[root];
+                r[root] = r[child];
+                r[child] = tmp;
+            } else {
+                break;
+            }
+        }
+    }
+}
+
+static double sensor_dist(struct sim_app *app, int t)
+{
+    static double **prev_data = NULL;
+    static struct reading last_reading = {0};
+    static struct reading *reading_buffer = NULL;
+    static int rb_size = 0;
+    static int last_time = -1;
+    static int *per_rank_counts = NULL;
+    static int *dspls = NULL;
+    double dist = 0;
+    int count = 0;
+    int local_count = 0;
+    int rank;
+    int i;
+
+    if(!app->rank) {
+        if(!per_rank_counts) {
+            per_rank_counts = malloc(sizeof(*per_rank_counts) * app->size);
+            dspls = malloc(sizeof(*dspls) * app->size);
+        }
+        for(i = 0; i < app->size; i++) {
+            per_rank_counts[i] = 0;
+        }
+
+        while(last_time <= t) {
+            if(last_time > -1) {
+                count++;
+                if(count > rb_size) {
+                    if(rb_size == 0) {
+                        rb_size = 8;
+                    }
+                    rb_size *= 2;
+                    reading_buffer = realloc(reading_buffer,
+                                             rb_size * sizeof(*reading_buffer));
+                }
+                reading_buffer[count - 1] = last_reading;
+                rank = rank_from_geocoords(app, last_reading.loc);
+                reading_buffer[count - 1].id = rank;
+                per_rank_counts[rank]++;
+            }
+            if(feof(app->sstream)) {
+                last_time = -1;
+                break;
+            }
+            fscanf(app->sstream, "{ t:%i, loc: (%lf, %lf), value: %lf }\n",
+                   &last_time, &last_reading.loc[LAT_IDX],
+                   &last_reading.loc[LONG_IDX], &last_reading.value);
+        }
+        sort_readings(reading_buffer, count);
+        dspls[0] = 0;
+        for(i = 1; i < app->size; i++) {
+            // TODO: add struct type
+            dspls[i] = dspls[i - 1] +
+                       (per_rank_counts[i - 1] * sizeof(*reading_buffer));
+        }
+    }
+
+    MPI_Scatter(per_rank_counts, 1, MPI_INT, &local_count, 1, MPI_INT, 0,
+                app->comm);
+    if(local_count)
+        printf("rank: %i, local_count = %i\n", app->rank, local_count);
+    if(app->rank) {
+        if(local_count > rb_size) {
+            reading_buffer =
+                realloc(reading_buffer, sizeof(*reading_buffer) * rb_size);
+        }
+        // TODO: add struct type
+        local_count *= sizeof(*reading_buffer);
+        MPI_Scatterv(reading_buffer, per_rank_counts, dspls, MPI_BYTE,
+                     reading_buffer, local_count, MPI_BYTE, 0, app->comm);
+    } else {
+        for(i = 0; i < app->size; i++) {
+            // TODO: add struct type
+            per_rank_counts[i] *= sizeof(*reading_buffer);
+        }
+        MPI_Scatterv(reading_buffer, per_rank_counts, dspls, MPI_BYTE,
+                     MPI_IN_PLACE, local_count, MPI_BYTE, 0, app->comm);
+    }
+
+    if(!app->rank && count)
+        printf("count = %i, rb_size = %i\n", count, rb_size);
+
+    return (0.0);
 }
 
 void fwrite_pgrid_data(struct sim_app *app, const char *filename, int step)
@@ -531,26 +718,28 @@ void fwrite_pgrid_data(struct sim_app *app, const char *filename, int step)
         dspls[0] = 0;
         for(i = 0; i < app->size - 1; i++) {
             sizes[i] = app->bounds[i][2] * app->bounds[i][3];
-            dspls[i+1] = dspls[i] + sizes[i];
+            dspls[i + 1] = dspls[i] + sizes[i];
         }
         sizes[i] = app->bounds[i][2] * app->bounds[i][3];
     }
     if(!send_type) {
-        arrsizes[1] = pgrid->nx+2;
-        arrsizes[0] = pgrid->ny+2;
+        arrsizes[1] = pgrid->nx + 2;
+        arrsizes[0] = pgrid->ny + 2;
         subsizes[1] = pgrid->nx;
         subsizes[0] = pgrid->ny;
         starts[0] = 1;
         starts[1] = 1;
         send_type = malloc(sizeof(*send_type));
-        MPI_Type_create_subarray(2, arrsizes, subsizes, starts, MPI_ORDER_C, MPI_DOUBLE, send_type);
+        MPI_Type_create_subarray(2, arrsizes, subsizes, starts, MPI_ORDER_C,
+                                 MPI_DOUBLE, send_type);
         MPI_Type_commit(send_type);
     }
     MPI_Isend(pgrid->data[0], 1, *send_type, 0, 0, app->comm, &req);
     if(!app->rank) {
         for(i = 0; i < app->size; i++) {
             rdata = &recv_buf[dspls[i]];
-            MPI_Recv(rdata, sizes[i], MPI_DOUBLE, i, 0, app->comm, MPI_STATUS_IGNORE);
+            MPI_Recv(rdata, sizes[i], MPI_DOUBLE, i, 0, app->comm,
+                     MPI_STATUS_IGNORE);
             ox = app->bounds[i][0];
             oy = app->bounds[i][1];
             nx = app->bounds[i][2];
@@ -578,6 +767,7 @@ int main(int argc, char *argv[])
     char outbase[100], outfile[100];
     double max;
     int t;
+    double diff;
 
     MPI_Init(&argc, &argv);
 
@@ -585,8 +775,8 @@ int main(int argc, char *argv[])
         goto err_out;
     }
 
-    //TODO: update for parallel grid
-    //printf_grid(grid);
+    // TODO: update for parallel grid
+    // printf_grid(grid);
 
     if(!app.rank) {
         if(args->sim_out_dir && create_dir(args->sim_out_dir)) {
@@ -614,6 +804,9 @@ int main(int argc, char *argv[])
             }
             fwrite_pgrid_data(&app, outfile, t);
         }
+        if(args->val_steps && t % args->val_steps == 0) {
+            diff = sensor_dist(&app, t);
+        }
     }
 
     MPI_Finalize();
@@ -622,5 +815,4 @@ int main(int argc, char *argv[])
 err_out:
     MPI_Finalize();
     return EXIT_FAILURE;
-
 }
