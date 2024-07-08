@@ -591,6 +591,7 @@ static void sort_readings(struct reading *r, int n)
                 tmp = r[root];
                 r[root] = r[child];
                 r[child] = tmp;
+                root = child;
             } else {
                 break;
             }
@@ -712,6 +713,7 @@ static double sensor_dist(struct sim_app *app, int t)
             last_time = last_reading.t;
         }
         sort_readings(reading_buffer, count);
+
         dspls[0] = 0;
         for(i = 1; i < app->size; i++) {
             // TODO: add struct type
@@ -725,8 +727,6 @@ static double sensor_dist(struct sim_app *app, int t)
         count += per_rank_counts[i];
     }
     local_count = per_rank_counts[app->rank];
-    if(local_count)
-        printf("rank: %i, local_count = %i\n", app->rank, local_count);
     if(app->rank) {
         if(local_count > rb_size) {
             rb_size = local_count;
@@ -836,7 +836,7 @@ int main(int argc, char *argv[])
     struct sim_app app = {0};
     struct sim_args *args = &app.args;
     struct sim_pgrid *pgrid = &app.pgrid;
-    char outbase[100], outfile[100];
+    char outbase[100], outfile[120];
     double max;
     int t;
     double diff;
