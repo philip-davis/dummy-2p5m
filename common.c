@@ -7,6 +7,30 @@
 #include "common.h"
 #include "toml.h"
 
+double **init_grid_data(int x, int y, int with_ghosts, double value)
+{
+    double **data;
+    int i, j;
+
+    if(with_ghosts) {
+        x += 2;
+        y += 2;
+    }
+
+    data = malloc(sizeof(*data) * y);
+    data[0] = malloc(sizeof(**data) * x * y);
+    for(i = 0; i < y; i++) {
+        if(i) {
+            data[i] = &(data[0][x * i]);
+        }
+        for(j = 0; j < x; j++) {
+            data[i][j] = value;
+        }
+    }
+
+    return (data);
+}
+
 void printf_grid(struct sim_grid *grid)
 {
     struct sim_args *passed_args = grid->args;

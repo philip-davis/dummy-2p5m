@@ -190,6 +190,7 @@ int init_sim_grid(struct sim_app *app)
     struct sim_args *args = &app->args;
     int gplumex, gplumey;
     int bounds[4];
+    const int with_ghosts = 1;
     int i, j;
 
     pgrid->args = &app->args;
@@ -231,18 +232,8 @@ int init_sim_grid(struct sim_app *app)
         }
     }
 
-    // expand for ghosts
-    pgrid->data = malloc(sizeof(*pgrid->data) * (pgrid->ny + 2));
-    pgrid->data[0] =
-        malloc(sizeof(*pgrid->data[0]) * (pgrid->nx + 2) * (pgrid->ny + 2));
-    for(i = 0; i < pgrid->ny + 2; i++) {
-        if(i) {
-            pgrid->data[i] = &(pgrid->data[0][i * (pgrid->nx + 2)]);
-        }
-        for(j = 0; j < pgrid->nx + 2; j++) {
-            pgrid->data[i][j] = args->baseline;
-        }
-    }
+    pgrid->data =
+        init_grid_data(pgrid->nx, pgrid->ny, with_ghosts, args->baseline);
 
     for(i = 0; i < 4; i++) {
         if(app->nranks[i] > -1) {
@@ -475,6 +466,7 @@ void exchange_ghosts(struct sim_app *app)
 double convect_diffuse(struct sim_app *app)
 {
     static double **new_data = NULL;
+    const int with_ghosts = 1;
     struct sim_args *args = &app->args;
     struct sim_pgrid *pgrid = &app->pgrid;
     double i_bias, j_bias;
@@ -496,11 +488,7 @@ double convect_diffuse(struct sim_app *app)
 
     // keep reusing the same static buffer
     if(!new_data) {
-        new_data = malloc(sizeof(*new_data) * (ny + 2));
-        new_data[0] = malloc(sizeof(*new_data[0]) * (nx + 2) * (ny + 2));
-        for(i = 1; i < ny + 2; i++) {
-            new_data[i] = &(new_data[0][i * (nx + 2)]);
-        }
+        new_data = init_grid_data(nx, ny, with_ghosts, 0.0);
     }
 
     // TODO: fiddle with coefficients? Better put in some stability checks at
@@ -610,9 +598,69 @@ static void sort_readings(struct reading *r, int n)
     }
 }
 
+double bilinear_interp(double nw, double ne, double sw, double se, double qx,
+                       double qy)
+{
+    double q[2];
+
+    q[0] = ne * qx + nw * (1.0 - qx);
+    q[1] = se * qx + sw * (1.0 - qx);
+
+    return (q[1] * qy + q[0] * (1.0 - qy));
+}
+
+static double reading_dist(struct sim_app *app, int t, double **prev_data,
+                           int prev_t, struct reading *r)
+{
+    struct sim_args *args = &app->args;
+    struct sim_pgrid *pgrid = &app->pgrid;
+    double **data = pgrid->data;
+    int x, y;
+    double qx, qy, qt;
+    double u_now, u_prev, u;
+
+    x = (int)((r->loc[LONG_IDX] - args->min_coord[LONG_IDX]) /
+              args->grid_deltas[LONG_IDX]) -
+        pgrid->ox;
+    y = (int)((r->loc[LAT_IDX] - args->min_coord[LAT_IDX]) /
+              args->grid_deltas[LAT_IDX]) -
+        pgrid->oy;
+    qx = fmod(r->loc[LONG_IDX], args->grid_deltas[LONG_IDX]);
+    qy = fmod(r->loc[LAT_IDX], args->grid_deltas[LAT_IDX]);
+
+    u_now = bilinear_interp(data[y + 1][x + 1], data[y + 1][x + 2],
+                            data[y + 2][x + 1], data[y + 2][x + 2], qx, qy);
+    if(r->t == t) {
+        u = u_now;
+    } else if(r->t >= prev_t && r->t <= t) {
+        if(prev_t < 0) {
+            fprintf(stderr, "ERROR: %s: No start to interpolation window.\n",
+                    __func__);
+            return (INFINITY);
+        } else {
+            u_prev = bilinear_interp(
+                prev_data[y + 1][x + 1], prev_data[y + 1][x + 2],
+                prev_data[y + 2][x + 1], prev_data[y + 2][x + 2], qx, qy);
+            qt = (double)(r->t - prev_t) / (double)(t - prev_t);
+            u = u_now * qt + u_prev * (1.0 - qt);
+        }
+    } else {
+        fprintf(stderr,
+                "ERROR: %s: reading time is %i, but interpolation window is %i "
+                "to %i.\n",
+                __func__, r->t, prev_t, t);
+        return (INFINITY);
+    }
+
+    return ((r->value - u) * (r->value - u));
+}
+
 static double sensor_dist(struct sim_app *app, int t)
 {
     static double **prev_data = NULL;
+    static int prev_t = -1;
+    struct sim_pgrid *pgrid = &app->pgrid;
+    const int with_ghosts = 1;
     static struct reading last_reading = {0};
     static struct reading *reading_buffer = NULL;
     static int rb_size = 0;
@@ -622,12 +670,16 @@ static double sensor_dist(struct sim_app *app, int t)
     double dist = 0;
     int count = 0;
     int local_count = 0;
+    int local_byte_count;
     int rank;
     int i;
 
+    if(!per_rank_counts) {
+        per_rank_counts = malloc(sizeof(*per_rank_counts) * app->size);
+    }
+
     if(!app->rank) {
-        if(!per_rank_counts) {
-            per_rank_counts = malloc(sizeof(*per_rank_counts) * app->size);
+        if(!dspls) {
             dspls = malloc(sizeof(*dspls) * app->size);
         }
         for(i = 0; i < app->size; i++) {
@@ -655,8 +707,9 @@ static double sensor_dist(struct sim_app *app, int t)
                 break;
             }
             fscanf(app->sstream, "{ t:%i, loc: (%lf, %lf), value: %lf }\n",
-                   &last_time, &last_reading.loc[LAT_IDX],
+                   &last_reading.t, &last_reading.loc[LAT_IDX],
                    &last_reading.loc[LONG_IDX], &last_reading.value);
+            last_time = last_reading.t;
         }
         sort_readings(reading_buffer, count);
         dspls[0] = 0;
@@ -666,9 +719,12 @@ static double sensor_dist(struct sim_app *app, int t)
                        (per_rank_counts[i - 1] * sizeof(*reading_buffer));
         }
     }
-
-    MPI_Scatter(per_rank_counts, 1, MPI_INT, &local_count, 1, MPI_INT, 0,
-                app->comm);
+    MPI_Bcast(per_rank_counts, app->size, MPI_INT, 0, app->comm);
+    count = 0;
+    for(i = 0; i < app->size; i++) {
+        count += per_rank_counts[i];
+    }
+    local_count = per_rank_counts[app->rank];
     if(local_count)
         printf("rank: %i, local_count = %i\n", app->rank, local_count);
     if(app->rank) {
@@ -678,22 +734,37 @@ static double sensor_dist(struct sim_app *app, int t)
                 realloc(reading_buffer, sizeof(*reading_buffer) * rb_size);
         }
         // TODO: add struct type
-        local_count *= sizeof(*reading_buffer);
+        local_byte_count = local_count * sizeof(*reading_buffer);
         MPI_Scatterv(reading_buffer, per_rank_counts, dspls, MPI_BYTE,
-                     reading_buffer, local_count, MPI_BYTE, 0, app->comm);
+                     reading_buffer, local_byte_count, MPI_BYTE, 0, app->comm);
     } else {
         for(i = 0; i < app->size; i++) {
             // TODO: add struct type
             per_rank_counts[i] *= sizeof(*reading_buffer);
         }
         MPI_Scatterv(reading_buffer, per_rank_counts, dspls, MPI_BYTE,
-                     MPI_IN_PLACE, local_count, MPI_BYTE, 0, app->comm);
+                     MPI_IN_PLACE, per_rank_counts[0], MPI_BYTE, 0, app->comm);
     }
 
-    if(!app->rank && count)
-        printf("count = %i, rb_size = %i\n", count, rb_size);
+    for(i = 0; i < local_count; i++) {
+        dist += reading_dist(app, t, prev_data, prev_t, &reading_buffer[i]);
+    }
+    MPI_Allreduce(MPI_IN_PLACE, &dist, 1, MPI_DOUBLE, MPI_SUM, app->comm);
+    dist /= count;
+    dist = sqrt(dist);
 
-    return (0.0);
+    if(!prev_data) {
+        // Include ghosts line up grids for interpolation
+        prev_data = init_grid_data(pgrid->nx, pgrid->ny, with_ghosts, 0.0);
+    }
+    prev_t = t;
+    memcpy(prev_data[0], &pgrid->data[0],
+           (pgrid->nx + 2) * (pgrid->ny + 2) * sizeof(**prev_data));
+
+    if(!app->rank && count)
+        printf("count = %i, rb_size = %i, dist = %lf\n", count, rb_size, dist);
+
+    return (dist);
 }
 
 void fwrite_pgrid_data(struct sim_app *app, const char *filename, int step)
@@ -798,7 +869,7 @@ int main(int argc, char *argv[])
     for(t = 0; t < args->steps; t++) {
         exchange_ghosts(&app);
         convect_diffuse(&app);
-        if(args->out_steps && t % args->out_steps == 0) {
+        if(!t || (args->out_steps && t % args->out_steps == 0)) {
             if(!app.rank) {
                 printf("Step %i\n", t);
                 sprintf(outfile, "%s%i.dat", outbase, t);

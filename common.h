@@ -14,6 +14,7 @@ struct sensor {
 
 struct reading {
     int id;
+    int t;
     double loc[2];
     double value;
 };
@@ -70,6 +71,8 @@ struct sim_grid {
     struct sim_args *args;     // inputed simulation parameters
     struct sensor_args *sargs; // inputed sensor parameters
 };
+
+double **init_grid_data(int x, int y, int with_ghosts, double value);
 
 /*
     Initialize a grid based on passed arguments. sargs can be NULL, but
