@@ -8,6 +8,8 @@
 #include "common.h"
 #include "toml.h"
 
+#include "dummy_benesh.h"
+
 struct sim_pgrid {
     int nx, ny;                // number of columns and rows
     int ox, oy;                // offset within the global grid
@@ -27,6 +29,7 @@ struct sim_pgrid {
 #define SOUTH_RANK 3
 
 struct sim_app {
+    benesh_app_id bnh;
     int (*bounds)[4];
     struct sim_args args;
     struct sim_pgrid pgrid;
@@ -185,7 +188,6 @@ int x_y_within_coords(int x, int y, int lbx, int lby, int lx, int ly)
 
 int init_sim_grid(struct sim_app *app)
 {
-
     struct sim_pgrid *pgrid = &app->pgrid;
     struct sim_args *args = &app->args;
     int gplumex, gplumey;
@@ -234,6 +236,10 @@ int init_sim_grid(struct sim_app *app)
 
     pgrid->data =
         init_grid_data(pgrid->nx, pgrid->ny, with_ghosts, args->baseline);
+    if(app->args.wf_name) {
+        
+    }
+
 
     for(i = 0; i < 4; i++) {
         if(app->nranks[i] > -1) {
@@ -352,6 +358,10 @@ int init_sim_app(int argc, char **argv, struct sim_app *app)
 
     if(validate_config(app)) {
         return EXIT_FAILURE;
+    }
+
+    if(app->args.wf_name) {
+        benesh_init(app->args.app_name, app->args.wf_name, app->comm, 0, 1, &app->bnh);
     }
 
     if(init_sim_grid(app)) {
@@ -610,65 +620,15 @@ double bilinear_interp(double nw, double ne, double sw, double se, double qx,
     return (q[1] * qy + q[0] * (1.0 - qy));
 }
 
-static double reading_dist(struct sim_app *app, int t, double **prev_data,
-                           int prev_t, struct reading *r)
+static struct reading *get_readings(struct sim_app *app, int t, int *lcount, int *gcount)
 {
-    struct sim_args *args = &app->args;
     struct sim_pgrid *pgrid = &app->pgrid;
-    double **data = pgrid->data;
-    int x, y;
-    double qx, qy, qt;
-    double u_now, u_prev, u;
-
-    x = (int)((r->loc[LONG_IDX] - args->min_coord[LONG_IDX]) /
-              args->grid_deltas[LONG_IDX]) -
-        pgrid->ox;
-    y = (int)((r->loc[LAT_IDX] - args->min_coord[LAT_IDX]) /
-              args->grid_deltas[LAT_IDX]) -
-        pgrid->oy;
-    qx = fmod(r->loc[LONG_IDX], args->grid_deltas[LONG_IDX]);
-    qy = fmod(r->loc[LAT_IDX], args->grid_deltas[LAT_IDX]);
-
-    u_now = bilinear_interp(data[y + 1][x + 1], data[y + 1][x + 2],
-                            data[y + 2][x + 1], data[y + 2][x + 2], qx, qy);
-    if(r->t == t) {
-        u = u_now;
-    } else if(r->t >= prev_t && r->t <= t) {
-        if(prev_t < 0) {
-            fprintf(stderr, "ERROR: %s: No start to interpolation window.\n",
-                    __func__);
-            return (INFINITY);
-        } else {
-            u_prev = bilinear_interp(
-                prev_data[y + 1][x + 1], prev_data[y + 1][x + 2],
-                prev_data[y + 2][x + 1], prev_data[y + 2][x + 2], qx, qy);
-            qt = (double)(r->t - prev_t) / (double)(t - prev_t);
-            u = u_now * qt + u_prev * (1.0 - qt);
-        }
-    } else {
-        fprintf(stderr,
-                "ERROR: %s: reading time is %i, but interpolation window is %i "
-                "to %i.\n",
-                __func__, r->t, prev_t, t);
-        return (INFINITY);
-    }
-
-    return ((r->value - u) * (r->value - u));
-}
-
-static double sensor_dist(struct sim_app *app, int t)
-{
-    static double **prev_data = NULL;
-    static int prev_t = -1;
-    struct sim_pgrid *pgrid = &app->pgrid;
-    const int with_ghosts = 1;
     static struct reading last_reading = {0};
     static struct reading *reading_buffer = NULL;
     static int rb_size = 0;
     static int last_time = -1;
     static int *per_rank_counts = NULL;
     static int *dspls = NULL;
-    double dist = 0;
     int count = 0;
     int local_count = 0;
     int local_byte_count;
@@ -746,25 +706,90 @@ static double sensor_dist(struct sim_app *app, int t)
                      MPI_IN_PLACE, per_rank_counts[0], MPI_BYTE, 0, app->comm);
     }
 
+    *lcount = local_count;
+    *gcount = count;
+
+    return(reading_buffer);
+}
+
+static double reading_dist(struct sim_app *app, int t, double **prev_data,
+                           int prev_t, struct reading *r)
+{
+    struct sim_args *args = &app->args;
+    struct sim_pgrid *pgrid = &app->pgrid;
+    double **data = pgrid->data;
+    int x, y;
+    double qx, qy, qt;
+    double u_now, u_prev, u;
+
+    x = (int)((r->loc[LONG_IDX] - args->min_coord[LONG_IDX]) /
+              args->grid_deltas[LONG_IDX]) -
+        pgrid->ox;
+    y = (int)((r->loc[LAT_IDX] - args->min_coord[LAT_IDX]) /
+              args->grid_deltas[LAT_IDX]) -
+        pgrid->oy;
+    qx = fmod(r->loc[LONG_IDX], args->grid_deltas[LONG_IDX]);
+    qy = fmod(r->loc[LAT_IDX], args->grid_deltas[LAT_IDX]);
+
+    u_now = bilinear_interp(data[y + 1][x + 1], data[y + 1][x + 2],
+                            data[y + 2][x + 1], data[y + 2][x + 2], qx, qy);
+    if(r->t == t) {
+        u = u_now;
+    } else if(r->t >= prev_t && r->t <= t) {
+        if(prev_t < 0) {
+            fprintf(stderr, "ERROR: %s: No start to interpolation window.\n",
+                    __func__);
+            return (INFINITY);
+        } else {
+            u_prev = bilinear_interp(
+                prev_data[y + 1][x + 1], prev_data[y + 1][x + 2],
+                prev_data[y + 2][x + 1], prev_data[y + 2][x + 2], qx, qy);
+            qt = (double)(r->t - prev_t) / (double)(t - prev_t);
+            u = u_now * qt + u_prev * (1.0 - qt);
+        }
+    } else {
+        fprintf(stderr,
+                "ERROR: %s: reading time is %i, but interpolation window is %i "
+                "to %i.\n",
+                __func__, r->t, prev_t, t);
+        return (INFINITY);
+    }
+
+    return ((r->value - u) * (r->value - u));
+}
+
+static int sensor_dist(struct sim_app *app, int t, double *ret_dist)
+{
+    struct sim_pgrid *pgrid = &app->pgrid;
+    struct reading *readings;
+    static double **prev_data = NULL;
+    const int with_ghosts = 1;
+    int local_count, count;
+    int prev_t = -1;
+    double dist = 0;
+    int i;
+
+    readings = get_readings(app, t, &local_count, &count);
+
     for(i = 0; i < local_count; i++) {
-        dist += reading_dist(app, t, prev_data, prev_t, &reading_buffer[i]);
+        dist += reading_dist(app, t, prev_data, prev_t, &readings[i]);
     }
     MPI_Allreduce(MPI_IN_PLACE, &dist, 1, MPI_DOUBLE, MPI_SUM, app->comm);
-    dist /= count;
+    if(count) {
+        dist /= count;
+    }
     dist = sqrt(dist);
 
+    prev_t = t;
     if(!prev_data) {
         // Include ghosts line up grids for interpolation
         prev_data = init_grid_data(pgrid->nx, pgrid->ny, with_ghosts, 0.0);
     }
-    prev_t = t;
     memcpy(prev_data[0], &pgrid->data[0],
            (pgrid->nx + 2) * (pgrid->ny + 2) * sizeof(**prev_data));
 
-    if(!app->rank && count)
-        printf("count = %i, rb_size = %i, dist = %lf\n", count, rb_size, dist);
-
-    return (dist);
+    *ret_dist = dist;
+    return(count);
 }
 
 void fwrite_pgrid_data(struct sim_app *app, const char *filename, int step)
@@ -838,8 +863,8 @@ int main(int argc, char *argv[])
     struct sim_pgrid *pgrid = &app.pgrid;
     char outbase[100], outfile[120];
     double max;
-    int t;
-    double diff;
+    int t, scount;
+    double dist;
 
     MPI_Init(&argc, &argv);
 
@@ -877,7 +902,10 @@ int main(int argc, char *argv[])
             fwrite_pgrid_data(&app, outfile, t);
         }
         if(args->val_steps && t % args->val_steps == 0) {
-            diff = sensor_dist(&app, t);
+            scount = sensor_dist(&app, t, &dist);
+            if(!app.rank && scount) {
+                printf("%i, %i, %lf\n", t, scount, dist);
+            }
         }
     }
 

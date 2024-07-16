@@ -31,3 +31,8 @@ rate = 10
 mobile = 10
 speed = 8
 noise = 0.05
+
+[coupling]
+name = '2p5m.xc'
+sim_name = 'sim'
+aq_source = 'aqi'

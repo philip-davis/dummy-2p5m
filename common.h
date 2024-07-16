@@ -46,6 +46,8 @@ struct sim_args {
     char *sensor_stream; // file containing sensor readings
 
     char *input_file; // shared toml config file
+    char *app_name; // app name passed to Benesh
+    char *wf_name; // workflow file for Benesh
 };
 
 struct sensor_args {
@@ -60,6 +62,8 @@ struct sensor_args {
     // environmental arguments that fit with sensors for now
     double wind_shift[2]; // magnitude by which wind can vary
     double variation;     // magnitude of particulate variation
+
+    char *app_name; // app name passed to Beneshs
 };
 
 struct sim_grid {

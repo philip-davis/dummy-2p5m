@@ -124,7 +124,7 @@ int parse_conf(const char *filename, struct sim_args *args,
                struct sensor_args *sargs)
 {
     FILE *f;
-    toml_table_t *conf, *model, *sim, *sensors, *grid, *env;
+    toml_table_t *conf, *model, *sim, *sensors, *grid, *env, *couple;
     toml_table_t *validate;
     toml_datum_t dat;
     toml_array_t *arr;
@@ -143,6 +143,13 @@ int parse_conf(const char *filename, struct sim_args *args,
         return -1;
     }
     fclose(f);
+
+    couple = toml_table_in(conf, "coupling");
+    if(couple) {
+        get_toml_str(couple, "name", &args->wf_name);
+        get_toml_str(couple, "sim_name", &args->app_name);
+        get_toml_str(couple, "aq_source", &sargs->app_name);
+    }
 
     model = toml_table_in(conf, "model");
     if(get_toml_pair(model, "plume", args->plume_source)) {
