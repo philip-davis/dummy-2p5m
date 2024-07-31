@@ -186,6 +186,29 @@ int x_y_within_coords(int x, int y, int lbx, int lby, int lx, int ly)
     return (0);
 }
 
+static void bind_wf_grid(struct sim_app *app)
+{
+    bnh_storage_def_t gdef;
+    benesh_domain_fragment_t dfrag;
+    struct sim_pgrid *pgrid = &app->pgrid;
+    struct sim_args *args = &app->args;
+    int dims[2];
+    double geo_lb[2], geo_ub[2];
+
+    dims[0] = pgrid->ny;
+    dims[1] = pgrid->nx;
+
+    gdef = benesh_grid_def(2, dims, BNH_ROW_MAJOR);
+    benesh_grid_ghosts_uniform(gdef, 1);
+    geo_lb[LAT_IDX] = args->min_coord[LAT_IDX] + pgrid->oy * args->grid_deltas[LAT_IDX];
+    geo_lb[LONG_IDX] = args->min_coord[LONG_IDX] + pgrid->ox * args->grid_deltas[LONG_IDX];
+    geo_ub[LAT_IDX] = geo_lb[LAT_IDX] + pgrid->ny * args->grid_deltas[LAT_IDX];
+    geo_ub[LONG_IDX] = geo_lb[LONG_IDX] + pgrid->ny * args->grid_deltas[LONG_IDX];
+
+    dfrag = benesh_domain_geotile_decompose(app->bnh, "Global", geo_lb, geo_ub);
+    benesh_bind_var_with_type(app->bnh, "2p5", gdef, dfrag, BNH_FLOAT);
+}
+
 int init_sim_grid(struct sim_app *app)
 {
     struct sim_pgrid *pgrid = &app->pgrid;
@@ -237,9 +260,8 @@ int init_sim_grid(struct sim_app *app)
     pgrid->data =
         init_grid_data(pgrid->nx, pgrid->ny, with_ghosts, args->baseline);
     if(app->args.wf_name) {
-        
+        bind_wf_grid(app);
     }
-
 
     for(i = 0; i < 4; i++) {
         if(app->nranks[i] > -1) {
@@ -862,6 +884,7 @@ int main(int argc, char *argv[])
     struct sim_args *args = &app.args;
     struct sim_pgrid *pgrid = &app.pgrid;
     char outbase[100], outfile[120];
+    char tp_str[100];
     double max;
     int t, scount;
     double dist;
@@ -899,16 +922,18 @@ int main(int argc, char *argv[])
                 printf("Step %i\n", t);
                 sprintf(outfile, "%s%i.dat", outbase, t);
             }
-            fwrite_pgrid_data(&app, outfile, t);
         }
         if(args->val_steps && t % args->val_steps == 0) {
+            sprintf(tp_str, "ts.%d", t);
+            benesh_touchpoint(app.bnh, tp_str);
+            fwrite_pgrid_data(&app, outfile, t);
             scount = sensor_dist(&app, t, &dist);
             if(!app.rank && scount) {
                 printf("%i, %i, %lf\n", t, scount, dist);
             }
         }
     }
-
+    benesh_fini(app.bnh);
     MPI_Finalize();
     return EXIT_SUCCESS;
 
