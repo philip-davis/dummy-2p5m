@@ -1,5 +1,5 @@
-CFLAGS=-g
-LDFLAGS=-lm
+CFLAGS=-g $(shell pkg-config --cflags benesh)
+LDFLAGS=$(shell pkg-config --libs benesh) -lm 
 
 all: dummy_sim dummy_sense
 
